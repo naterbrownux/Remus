@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Remus",
+    "slug": "remus-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "remus",
+    "platforms": ["ios", "android"],
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan desktop pairing QR codes and physical media liner notes."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false
+        }
+      ]
+    ]
+  }
+}

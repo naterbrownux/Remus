@@ -1,0 +1,19 @@
+[package]
+name = "remus-desktop"
+version = "0.1.0"
+description = "Remus local-first lossless audio server, file watcher, and CD ripper"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = ["tray-icon"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.43", features = ["full"] }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+rusqlite = { version = "0.33", features = ["bundled"] }
+mdns-sd = "0.13"
+notify = "8.0"
