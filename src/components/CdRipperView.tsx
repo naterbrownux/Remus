@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle2, Disc, Play, Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, Play, Plus, Trash2 } from 'lucide-react';
 import type { AlbumWithDetails, StorageRoot } from '../../packages/shared/src/types';
 
 interface CdRipperViewProps {
@@ -92,10 +92,7 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-[#F2EFE9]">Optical CD Ripper</h1>
-          <p className="text-sm text-[#9E9B93]">
-            Bit-perfect AccurateRip v2 extraction with offset calibration and gapless cue detection
-          </p>
+          <h1 className="text-2xl font-semibold text-[#F2EFE9]">CD Ripper</h1>
         </div>
 
         <button
@@ -112,14 +109,6 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
       {/* Drive & Disc Metadata */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-5 p-5 rounded-xl bg-[#161614] border border-[#2A2A27] space-y-4">
-          <div className="flex items-center gap-3 pb-3 border-b border-[#2A2A27]">
-            <Disc className={`w-5 h-5 text-[#E06D2B] ${ripping ? 'animate-spin' : ''}`} />
-            <div>
-              <div className="text-sm font-semibold text-[#F2EFE9]">Hardware Optical Unit</div>
-              <div className="text-xs text-[#9E9B93] font-mono">Read Offset +667 · C2 Pointers Enabled</div>
-            </div>
-          </div>
-
           <div className="space-y-3">
             <div>
               <label className="block text-xs text-[#9E9B93] mb-1">Optical Drive</label>

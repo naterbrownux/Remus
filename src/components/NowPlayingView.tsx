@@ -15,7 +15,7 @@ import {
   VolumeX,
 } from 'lucide-react';
 import type { AlbumWithDetails, Track } from '../../packages/shared/src/types';
-import type { ActiveQueueItem } from '../hooks/useGaplessPlayer';
+import type { ActiveQueueItem, RecentPlayedItem } from '../hooks/useGaplessPlayer';
 import {
   formatAudioSpec,
   formatDurationMs,
@@ -36,6 +36,7 @@ interface NowPlayingViewProps {
   volume: number;
   isMuted: boolean;
   cachedTrackIds: Set<string>;
+  recentlyPlayed: RecentPlayedItem[];
   lastRangeInfo: string;
   onTogglePlay: () => void;
   onPrev: () => void;
@@ -62,6 +63,7 @@ export function NowPlayingView({
   volume,
   isMuted,
   cachedTrackIds,
+  recentlyPlayed,
   lastRangeInfo,
   onTogglePlay,
   onPrev,
@@ -103,7 +105,7 @@ export function NowPlayingView({
                 onClick={onBrowseLibrary}
                 className="px-4 py-2 rounded-lg bg-[#E06D2B] hover:bg-[#EB7B3B] text-xs font-semibold text-[#121211] cursor-pointer whitespace-nowrap"
               >
-                Browse Full Library
+                Browse Library
               </button>
             </div>
           </div>
@@ -113,50 +115,69 @@ export function NowPlayingView({
           </div>
         </div>
 
-        {albums.length > 0 && (
-          <section className="space-y-4">
-            <h2 className="text-sm font-semibold text-[#9E9B93]">
-              Quick Start from Library
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-              {albums.slice(0, 4).map((album) => {
-                const cover = getAlbumCoverUrl(album);
-                return (
-                  <button
-                    key={album.id}
-                    type="button"
-                    onClick={() => onPlayAlbum(album)}
-                    className="group p-3.5 rounded-xl border border-[#2A2A27] bg-[#161614] hover:border-[#3D3D38] text-left flex items-center gap-3.5 transition-colors cursor-pointer"
-                  >
-                    <div className="w-14 h-14 rounded-lg overflow-hidden bg-[#22221F] shrink-0 flex items-center justify-center">
-                      {cover ? (
-                        <img
-                          src={cover}
-                          alt={album.title}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <Disc3 className="w-6 h-6 text-[#706D66]" />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-[#F2EFE9] truncate group-hover:text-[#E06D2B] transition-colors">
-                        {album.title}
-                      </div>
-                      <div className="text-xs text-[#9E9B93] truncate">
-                        {album.artist}
-                      </div>
-                      <div className="text-[11px] text-[#706D66] mt-0.5">
-                        {formatMediaFormatLabel(album.media_format)}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        )}
+        {(() => {
+          const recentFiles = recentlyPlayed
+            .map((entry) => {
+              const album = albums.find((a) => a.id === entry.albumId);
+              const track = album?.tracks.find((t) => t.id === entry.trackId);
+              if (!album || !track) return null;
+              return { album, track, playedAt: entry.playedAt };
+            })
+            .filter((item): item is { album: AlbumWithDetails; track: Track; playedAt: string } => item !== null);
+
+          return (
+            <section className="space-y-4">
+              <h2 className="text-sm font-semibold text-[#9E9B93]">
+                Recently Played
+              </h2>
+
+              {recentFiles.length === 0 ? (
+                <div className="p-6 rounded-xl border border-[#2A2A27] bg-[#161614] text-sm text-[#9E9B93]">
+                  No files played yet. Play any track from your Library or File Browser and your most recently played files will appear here.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+                  {recentFiles.slice(0, 8).map(({ album, track }) => {
+                    const cover = getAlbumCoverUrl(album);
+                    const fileName = track.relative_file_path.split('/').pop() || track.relative_file_path;
+                    return (
+                      <button
+                        key={track.id}
+                        type="button"
+                        onClick={() => onPlayAlbum(album, track.id)}
+                        className="group p-3.5 rounded-xl border border-[#2A2A27] bg-[#161614] hover:border-[#3D3D38] text-left flex items-center gap-3.5 transition-colors cursor-pointer"
+                      >
+                        <div className="w-14 h-14 rounded-lg overflow-hidden bg-[#22221F] shrink-0 flex items-center justify-center">
+                          {cover ? (
+                            <img
+                              src={cover}
+                              alt={album.title}
+                              referrerPolicy="no-referrer"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <Disc3 className="w-6 h-6 text-[#706D66]" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold text-[#F2EFE9] truncate group-hover:text-[#E06D2B] transition-colors">
+                            {track.title}
+                          </div>
+                          <div className="text-xs text-[#9E9B93] truncate">
+                            {track.artist || album.artist} · {album.title}
+                          </div>
+                          <div className="text-[11px] font-mono text-[#706D66] truncate mt-0.5">
+                            {fileName}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          );
+        })()}
       </div>
     );
   }

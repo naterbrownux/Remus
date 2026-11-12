@@ -25,6 +25,7 @@ import type {
 import { AddReleaseModal } from './components/AddReleaseModal';
 import { AlbumDetailView } from './components/AlbumDetailView';
 import { CdRipperView } from './components/CdRipperView';
+import { MobileScanCaptureView } from './components/MobileScanCaptureView';
 import { MobileSyncView } from './components/MobileSyncView';
 import { MonorepoView } from './components/MonorepoView';
 import { NowPlayingView } from './components/NowPlayingView';
@@ -54,6 +55,38 @@ export default function App() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [downloadingAlbumIds, setDownloadingAlbumIds] = useState<Set<string>>(new Set());
+
+  const initialSearch = useMemo(() => new URLSearchParams(window.location.search), []);
+  const [mobileScanMode, setMobileScanMode] = useState(
+    () => initialSearch.get('mobile-scan') === '1'
+  );
+  const [mobileScanAlbumId, setMobileScanAlbumId] = useState<string | null>(
+    () => initialSearch.get('albumId')
+  );
+  const mobileScanToken = initialSearch.get('token');
+
+  const openMobileScanMode = useCallback((albumId?: string) => {
+    setMobileScanAlbumId(albumId || null);
+    setMobileScanMode(true);
+    const params = new URLSearchParams(window.location.search);
+    params.set('mobile-scan', '1');
+    if (albumId) {
+      params.set('albumId', albumId);
+    } else {
+      params.delete('albumId');
+    }
+    window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+  }, []);
+
+  const exitMobileScanMode = useCallback(() => {
+    setMobileScanMode(false);
+    const params = new URLSearchParams(window.location.search);
+    params.delete('mobile-scan');
+    params.delete('albumId');
+    params.delete('token');
+    const qs = params.toString();
+    window.history.replaceState({}, '', qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+  }, []);
 
   const player = useGaplessPlayer();
 
@@ -133,6 +166,18 @@ export default function App() {
       : isAdvancedActive
         ? `Advanced / ${advancedNavItems.find((n) => n.id === section)?.label || ''}`
         : primaryNavItems.find((n) => n.id === section)?.label || 'Library';
+
+  if (mobileScanMode) {
+    return (
+      <MobileScanCaptureView
+        albums={albums}
+        initialAlbumId={mobileScanAlbumId}
+        pairingToken={mobileScanToken}
+        onUploaded={fetchData}
+        onExitMobileMode={exitMobileScanMode}
+      />
+    );
+  }
 
   return (
     <div className="h-screen w-screen overflow-hidden flex flex-col bg-[#121211] text-[#F2EFE9]">
@@ -343,6 +388,11 @@ export default function App() {
                     setSelectedAlbumId(null);
                     await fetchData();
                   }}
+                  onOpenMobileSync={() => {
+                    setSelectedAlbumId(null);
+                    setSection('mobile');
+                  }}
+                  onOpenMobileScanMode={(albumId) => openMobileScanMode(albumId)}
                 />
               )}
 
@@ -617,6 +667,7 @@ export default function App() {
                   volume={player.volume}
                   isMuted={player.isMuted}
                   cachedTrackIds={player.cachedTrackIds}
+                  recentlyPlayed={player.recentlyPlayed}
                   lastRangeInfo={player.lastRangeInfo}
                   onTogglePlay={player.togglePlayPause}
                   onPrev={player.playPrevious}
@@ -671,6 +722,8 @@ export default function App() {
                   onPlayAlbum={player.playAlbum}
                   onCacheOffline={player.cacheAlbumOffline}
                   onRemoveOfflineCache={player.removeAlbumOfflineCache}
+                  onRefreshCatalog={fetchData}
+                  onOpenMobileScanMode={(albumId) => openMobileScanMode(albumId)}
                 />
               )}
 

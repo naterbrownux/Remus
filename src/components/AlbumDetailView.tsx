@@ -1,27 +1,34 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowLeft,
   BookOpen,
   Check,
+  Copy,
   Disc3,
+  ExternalLink,
   HardDriveDownload,
   Play,
   Plus,
   ScanText,
+  Smartphone,
   Trash2,
   Upload,
 } from 'lucide-react';
 import type {
   AlbumWithDetails,
   LinerNotePageType,
+  PairingInfo,
 } from '../../packages/shared/src/types';
 import {
-  formatAudioSpec,
   formatDurationMs,
   formatMediaFormatLabel,
   formatPageTypeLabel,
   getAlbumCoverUrl,
 } from '../lib/formatters';
+import {
+  SleeveImageUploader,
+  type QueuedSleeveImage,
+} from './SleeveImageUploader';
 
 interface AlbumDetailViewProps {
   album: AlbumWithDetails;
@@ -34,6 +41,8 @@ interface AlbumDetailViewProps {
   onRemoveOfflineCache: (album: AlbumWithDetails) => Promise<void>;
   onRefreshAlbum: () => Promise<void>;
   onDeleted: () => Promise<void>;
+  onOpenMobileSync: () => void;
+  onOpenMobileScanMode: (albumId: string) => void;
 }
 
 export function AlbumDetailView({
@@ -47,6 +56,8 @@ export function AlbumDetailView({
   onRemoveOfflineCache,
   onRefreshAlbum,
   onDeleted,
+  onOpenMobileSync,
+  onOpenMobileScanMode,
 }: AlbumDetailViewProps) {
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(
     album.liner_notes[0]?.id || null
@@ -64,18 +75,100 @@ export function AlbumDetailView({
   const [addingTrack, setAddingTrack] = useState(false);
 
   const [showUploadLiner, setShowUploadLiner] = useState(false);
-  const [linerPageType, setLinerPageType] = useState<LinerNotePageType>('gatefold');
-  const [linerFile, setLinerFile] = useState<File | null>(null);
-  const [autoRunOcr, setAutoRunOcr] = useState(true);
+  const [showMobileScanQr, setShowMobileScanQr] = useState(false);
+  const [mobilePairing, setMobilePairing] = useState<PairingInfo | null>(null);
+  const [copiedScanLink, setCopiedScanLink] = useState(false);
+  const [queuedSleeveImages, setQueuedSleeveImages] = useState<QueuedSleeveImage[]>([]);
+  const [autoRunOcr, setAutoRunOcr] = useState(false);
   const [uploadingLiner, setUploadingLiner] = useState(false);
+  const [deletingNoteId, setDeletingNoteId] = useState<string | null>(null);
 
   const [cachingOffline, setCachingOffline] = useState(false);
+  const sleeveSectionRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!showMobileScanQr) return;
+    fetch(`/api/pairing?albumId=${encodeURIComponent(album.id)}`)
+      .then((r) => r.json())
+      .then((data: PairingInfo) => setMobilePairing(data))
+      .catch(() => {});
+
+    const timer = window.setInterval(() => {
+      onRefreshAlbum().catch(() => {});
+    }, 3500);
+    return () => window.clearInterval(timer);
+  }, [album.id, onRefreshAlbum, showMobileScanQr]);
+
+  useEffect(() => {
+    return () => {
+      for (const item of queuedSleeveImages) {
+        URL.revokeObjectURL(item.previewUrl);
+      }
+    };
+  }, []);
 
   const coverUrl = getAlbumCoverUrl(album);
   const activeNote =
     album.liner_notes.find((n) => n.id === selectedNoteId) || album.liner_notes[0] || null;
   const allTracksCached =
     album.tracks.length > 0 && album.tracks.every((t) => cachedTrackIds.has(t.id));
+
+  function openSleeveUploader() {
+    setShowUploadLiner(true);
+    setTimeout(() => {
+      sleeveSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 40);
+  }
+
+  function handleAddSleeveFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+    if (files.length === 0) return;
+
+    const alreadyHasFront =
+      album.liner_notes.some((ln) => ln.page_type === 'front_cover') ||
+      queuedSleeveImages.some((q) => q.pageType === 'front_cover');
+
+    setQueuedSleeveImages((prev) => {
+      const next: QueuedSleeveImage[] = files.map((file, idx) => {
+        const lowerName = file.name.toLowerCase();
+        let defaultType: LinerNotePageType = 'gatefold';
+        if (lowerName.includes('front') || lowerName.includes('cover')) {
+          defaultType = 'front_cover';
+        } else if (lowerName.includes('back')) {
+          defaultType = 'back_cover';
+        } else if (lowerName.includes('gatefold')) {
+          defaultType = 'gatefold';
+        } else if (lowerName.includes('jcard') || lowerName.includes('j-card')) {
+          defaultType = 'j_card';
+        } else if (lowerName.includes('booklet') || lowerName.includes('insert')) {
+          defaultType = 'booklet';
+        } else if (!alreadyHasFront && idx === 0) {
+          defaultType = 'front_cover';
+        }
+        return {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          file,
+          previewUrl: URL.createObjectURL(file),
+          pageType: defaultType,
+        };
+      });
+      return [...prev, ...next];
+    });
+  }
+
+  function handleUpdateSleevePageType(id: string, pageType: LinerNotePageType) {
+    setQueuedSleeveImages((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, pageType } : item))
+    );
+  }
+
+  function handleRemoveQueuedSleeve(id: string) {
+    setQueuedSleeveImages((prev) => {
+      const target = prev.find((i) => i.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((i) => i.id !== id);
+    });
+  }
 
   async function handleSavePressingNotes() {
     setSavingNotes(true);
@@ -112,36 +205,76 @@ export function AlbumDetailView({
 
   async function handleUploadLiner(e: FormEvent) {
     e.preventDefault();
-    if (!linerFile) return;
+    if (queuedSleeveImages.length === 0) return;
     setUploadingLiner(true);
     setOcrStatusMsg(null);
     try {
-      const formData = new FormData();
-      formData.append('image', linerFile);
-      formData.append('page_type', linerPageType);
-      formData.append('run_ocr', autoRunOcr ? 'true' : 'false');
+      let lastUploadedId: string | null = null;
+      const ocrNotes: string[] = [];
 
-      const res = await fetch(`/api/albums/${album.id}/liner-notes`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Upload failed.');
+      for (const item of queuedSleeveImages) {
+        const formData = new FormData();
+        formData.append('image', item.file);
+        formData.append('page_type', item.pageType);
+        formData.append('run_ocr', autoRunOcr ? 'true' : 'false');
+
+        const res = await fetch(`/api/albums/${album.id}/liner-notes`, {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.error || `Upload failed for ${item.file.name}.`);
+        }
+        if (data.linerNoteId) {
+          lastUploadedId = data.linerNoteId;
+        }
+        if (data.ocrError) {
+          ocrNotes.push(data.ocrError);
+        }
       }
-      if (data.ocrError) {
-        setOcrStatusMsg(`Scan saved. OCR note: ${data.ocrError}`);
+
+      for (const item of queuedSleeveImages) {
+        URL.revokeObjectURL(item.previewUrl);
       }
+
+      const uploadedCount = queuedSleeveImages.length;
+      setQueuedSleeveImages([]);
       await onRefreshAlbum();
-      if (data.linerNoteId) {
-        setSelectedNoteId(data.linerNoteId);
+      if (lastUploadedId) {
+        setSelectedNoteId(lastUploadedId);
       }
-      setLinerFile(null);
       setShowUploadLiner(false);
+      setOcrStatusMsg(
+        ocrNotes.length > 0
+          ? `Uploaded ${uploadedCount} image${uploadedCount > 1 ? 's' : ''}. OCR note: ${ocrNotes[0]}`
+          : `Uploaded ${uploadedCount} sleeve/gatefold image${uploadedCount > 1 ? 's' : ''}.`
+      );
     } catch (err) {
       setOcrStatusMsg(err instanceof Error ? err.message : 'Upload failed.');
     } finally {
       setUploadingLiner(false);
+    }
+  }
+
+  async function handleDeleteLinerNote(noteId: string) {
+    setDeletingNoteId(noteId);
+    setOcrStatusMsg(null);
+    try {
+      const res = await fetch(`/api/liner-notes/${noteId}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to remove scan.');
+      }
+      await onRefreshAlbum();
+      if (selectedNoteId === noteId) {
+        const remaining = album.liner_notes.filter((n) => n.id !== noteId);
+        setSelectedNoteId(remaining[0]?.id || null);
+      }
+    } catch (err) {
+      setOcrStatusMsg(err instanceof Error ? err.message : 'Unable to delete scan.');
+    } finally {
+      setDeletingNoteId(null);
     }
   }
 
@@ -231,7 +364,7 @@ export function AlbumDetailView({
 
       {/* Hero Release Header */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch pb-8 border-b border-[#2A2A27]">
-        <div className="lg:col-span-4">
+        <div className="lg:col-span-4 space-y-2.5">
           <div className="aspect-square w-full max-w-sm rounded-xl overflow-hidden bg-[#1A1A18] border border-[#2A2A27] flex items-center justify-center">
             {coverUrl ? (
               <img
@@ -241,12 +374,30 @@ export function AlbumDetailView({
                 className="w-full h-full object-cover"
               />
             ) : (
-              <div className="flex flex-col items-center gap-2 text-[#706D66] p-6 text-center">
+              <div className="flex flex-col items-center gap-3 text-[#706D66] p-6 text-center">
                 <Disc3 className="w-12 h-12" />
-                <span className="text-xs font-medium">{album.title}</span>
+                <span className="text-xs font-medium text-[#9E9B93]">{album.title}</span>
+                <button
+                  type="button"
+                  onClick={openSleeveUploader}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#22221F] hover:bg-[#2C2C28] border border-[#2A2A27] text-xs font-medium text-[#F2EFE9] cursor-pointer whitespace-nowrap"
+                >
+                  <Upload className="w-3.5 h-3.5 text-[#E06D2B]" />
+                  <span>Upload Sleeve / Gatefold</span>
+                </button>
               </div>
             )}
           </div>
+          {coverUrl && (
+            <button
+              type="button"
+              onClick={openSleeveUploader}
+              className="inline-flex items-center gap-1.5 text-xs text-[#9E9B93] hover:text-[#E06D2B] transition-colors cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>Upload Sleeve / Gatefold Image</span>
+            </button>
+          )}
         </div>
 
         <div className="lg:col-span-8 flex flex-col justify-between space-y-5">
@@ -426,9 +577,8 @@ export function AlbumDetailView({
                 <tr className="border-b border-[#2A2A27] text-xs text-[#706D66]">
                   <th className="py-3 px-4 font-medium w-12">#</th>
                   <th className="py-3 px-4 font-medium">Title</th>
-                  <th className="py-3 px-4 font-medium">Stream Spec</th>
-                  <th className="py-3 px-4 font-medium">AccurateRip</th>
-                  <th className="py-3 px-4 font-medium">Gapless Link</th>
+                  <th className="py-3 px-4 font-medium">Album Title</th>
+                  <th className="py-3 px-4 font-medium">Year</th>
                   <th className="py-3 px-4 font-medium text-right">Duration</th>
                 </tr>
               </thead>
@@ -468,16 +618,11 @@ export function AlbumDetailView({
                           )}
                         </div>
                       </td>
-                      <td className="px-4 font-mono text-xs text-[#9E9B93] tabular-nums whitespace-nowrap">
-                        {formatAudioSpec(track.bit_depth, track.sample_rate, track.codec)}
+                      <td className="px-4 text-xs text-[#C9C5BC]">
+                        {album.title}
                       </td>
                       <td className="px-4 font-mono text-xs text-[#9E9B93] tabular-nums whitespace-nowrap">
-                        {track.accuraterip_confidence
-                          ? `Verified (${track.accuraterip_confidence})`
-                          : 'Analog / Direct'}
-                      </td>
-                      <td className="px-4 font-mono text-xs text-[#706D66] tabular-nums whitespace-nowrap">
-                        {track.gapless_next_track_id ? 'Gapless Next' : 'End of Side'}
+                        {album.release_year ?? '—'}
                       </td>
                       <td className="px-4 font-mono text-xs text-[#9E9B93] text-right tabular-nums">
                         {formatDurationMs(track.duration_ms)}
@@ -491,26 +636,100 @@ export function AlbumDetailView({
         </div>
       </section>
 
-      {/* Liner Notes & Gatefold Archive */}
-      <section className="space-y-4 pt-4 border-t border-[#2A2A27]">
+      {/* Sleeve, Gatefold & Liner Notes Archive */}
+      <section ref={sleeveSectionRef} className="space-y-4 pt-4 border-t border-[#2A2A27]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-[#F2EFE9]">
-              Liner Notes & Sleeve Scans
+              Sleeve, Gatefold & Liner Scans
             </h2>
             <p className="text-xs text-[#9E9B93]">
-              Archival artwork pages with Gemini Vision OCR transcription
+              Upload front/back sleeve artwork, gatefold spreads, and booklet scans with optional Gemini Vision OCR
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowUploadLiner(!showUploadLiner)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-[#2A2A27] text-xs font-medium text-[#F2EFE9] hover:bg-[#1A1A18] transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>Upload Liner Scan</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setShowMobileScanQr(!showMobileScanQr)}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                showMobileScanQr
+                  ? 'border-[#E06D2B]/50 bg-[#E06D2B]/10 text-[#E06D2B]'
+                  : 'border-[#2A2A27] text-[#F2EFE9] hover:bg-[#1A1A18]'
+              }`}
+            >
+              <Smartphone className="w-3.5 h-3.5 text-[#E06D2B]" />
+              <span>Scan via Mobile Sync</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowUploadLiner(!showUploadLiner)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-[#2A2A27] text-xs font-medium text-[#F2EFE9] hover:bg-[#1A1A18] transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <Upload className="w-3.5 h-3.5 text-[#E06D2B]" />
+              <span>Upload Sleeve / Gatefold</span>
+            </button>
+          </div>
         </div>
+
+        {showMobileScanQr && (
+          <div className="p-4 rounded-xl bg-[#1A1A18] border border-[#2A2A27] flex flex-col sm:flex-row items-center gap-5">
+            <div className="w-32 h-32 rounded-xl bg-[#121211] border border-[#2A2A27] p-2.5 shrink-0 flex items-center justify-center">
+              {mobilePairing ? (
+                <div
+                  className="w-full h-full [&>svg]:w-full [&>svg]:h-full"
+                  dangerouslySetInnerHTML={{ __html: mobilePairing.scanQrSvg }}
+                />
+              ) : (
+                <span className="text-[11px] text-[#706D66]">Generating QR...</span>
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1 space-y-2.5">
+              <div className="text-sm font-semibold text-[#F2EFE9]">
+                Capture Sleeve & Gatefold Photos with Your Phone
+              </div>
+              <p className="text-xs text-[#9E9B93] leading-relaxed">
+                Scan this QR code with your phone camera to photograph sleeve covers or gatefolds for <span className="text-[#F2EFE9] font-medium">{album.title}</span>. Uploaded scans appear here automatically.
+              </p>
+
+              <div className="flex flex-wrap items-center gap-2.5 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => onOpenMobileScanMode(album.id)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#E06D2B] hover:bg-[#EB7B3B] text-xs font-semibold text-[#121211] cursor-pointer whitespace-nowrap"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open Mobile Scan Capture</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!mobilePairing) return;
+                    navigator.clipboard?.writeText(mobilePairing.scanUrl);
+                    setCopiedScanLink(true);
+                    setTimeout(() => setCopiedScanLink(false), 1800);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2A2A27] text-xs font-medium text-[#F2EFE9] hover:bg-[#22221F] cursor-pointer whitespace-nowrap"
+                >
+                  {copiedScanLink ? (
+                    <Check className="w-3.5 h-3.5 text-[#E06D2B]" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
+                  <span>{copiedScanLink ? 'Link Copied' : 'Copy Scan Link'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenMobileSync}
+                  className="text-xs text-[#9E9B93] hover:text-[#E06D2B] cursor-pointer whitespace-nowrap"
+                >
+                  Open Mobile Sync Hub
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {ocrStatusMsg && (
           <div className="p-3 rounded-lg bg-[#1A1A18] border border-[#2A2A27] text-xs text-[#C9C5BC]">
@@ -521,62 +740,70 @@ export function AlbumDetailView({
         {showUploadLiner && (
           <form
             onSubmit={handleUploadLiner}
-            className="p-4 rounded-xl bg-[#1A1A18] border border-[#2A2A27] grid grid-cols-1 md:grid-cols-4 gap-4 items-end"
+            className="p-4 rounded-xl bg-[#1A1A18] border border-[#2A2A27] space-y-4"
           >
-            <div>
-              <label className="block text-xs text-[#9E9B93] mb-1">Page Type</label>
-              <select
-                value={linerPageType}
-                onChange={(e) => setLinerPageType(e.target.value as LinerNotePageType)}
-                className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9]"
-              >
-                <option value="front_cover">Front Cover</option>
-                <option value="back_cover">Back Cover</option>
-                <option value="gatefold">Gatefold Spread</option>
-                <option value="booklet">Insert Booklet</option>
-                <option value="j_card">Cassette J-Card</option>
-              </select>
-            </div>
+            <SleeveImageUploader
+              items={queuedSleeveImages}
+              onAddFiles={handleAddSleeveFiles}
+              onUpdatePageType={handleUpdateSleevePageType}
+              onRemoveItem={handleRemoveQueuedSleeve}
+            />
 
-            <div>
-              <label className="block text-xs text-[#9E9B93] mb-1">Scan Image</label>
-              <input
-                type="file"
-                required
-                accept="image/*"
-                onChange={(e) => setLinerFile(e.target.files?.[0] || null)}
-                className="w-full text-xs text-[#9E9B93] file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-[#2A2A27] file:text-[#F2EFE9] file:cursor-pointer"
-              />
-            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <label className="flex items-center gap-2 text-xs text-[#C9C5BC] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoRunOcr}
+                  onChange={(e) => setAutoRunOcr(e.target.checked)}
+                  className="accent-[#E06D2B]"
+                />
+                <span>Run Gemini Vision OCR on upload</span>
+              </label>
 
-            <label className="flex items-center gap-2 text-xs text-[#C9C5BC] py-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoRunOcr}
-                onChange={(e) => setAutoRunOcr(e.target.checked)}
-                className="accent-[#E06D2B]"
-              />
-              <span>Run Gemini Vision OCR on upload</span>
-            </label>
-
-            <div className="flex items-center gap-2 justify-end">
-              <button
-                type="submit"
-                disabled={uploadingLiner || !linerFile}
-                className="px-4 py-2 rounded-lg bg-[#E06D2B] text-xs font-semibold text-[#121211] cursor-pointer disabled:opacity-40 whitespace-nowrap"
-              >
-                {uploadingLiner ? 'Uploading...' : 'Save Scan'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    for (const item of queuedSleeveImages) {
+                      URL.revokeObjectURL(item.previewUrl);
+                    }
+                    setQueuedSleeveImages([]);
+                    setShowUploadLiner(false);
+                  }}
+                  className="px-3 py-2 rounded-lg border border-[#2A2A27] text-xs text-[#9E9B93] hover:text-[#F2EFE9] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploadingLiner || queuedSleeveImages.length === 0}
+                  className="px-4 py-2 rounded-lg bg-[#E06D2B] hover:bg-[#EB7B3B] text-xs font-semibold text-[#121211] cursor-pointer disabled:opacity-40 whitespace-nowrap"
+                >
+                  {uploadingLiner
+                    ? 'Uploading...'
+                    : `Save ${queuedSleeveImages.length || ''} ${queuedSleeveImages.length === 1 ? 'Image' : 'Images'}`}
+                </button>
+              </div>
             </div>
           </form>
         )}
 
         {album.liner_notes.length === 0 ? (
-          <div className="p-8 rounded-xl border border-[#2A2A27] bg-[#161614] text-center space-y-2">
+          <div className="p-8 rounded-xl border border-[#2A2A27] bg-[#161614] text-center space-y-3">
             <BookOpen className="w-6 h-6 text-[#706D66] mx-auto" />
             <p className="text-sm text-[#9E9B93]">
-              No liner notes or sleeve scans attached to this release yet.
+              No sleeve covers, gatefold spreads, or liner scans attached to this release yet.
             </p>
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowUploadLiner(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#E06D2B] hover:bg-[#EB7B3B] text-xs font-semibold text-[#121211] cursor-pointer whitespace-nowrap"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Upload Sleeve / Gatefold</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -626,17 +853,29 @@ export function AlbumDetailView({
                 </div>
 
                 {activeNote && (
-                  <button
-                    type="button"
-                    disabled={ocrLoadingId === activeNote.id}
-                    onClick={() => handleRunOcr(activeNote.id)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#22221F] hover:bg-[#2C2C28] border border-[#2A2A27] text-xs font-medium text-[#F2EFE9] cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                  >
-                    <ScanText className="w-3.5 h-3.5 text-[#E06D2B]" />
-                    <span>
-                      {ocrLoadingId === activeNote.id ? 'Scanning...' : 'Extract Text'}
-                    </span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={ocrLoadingId === activeNote.id}
+                      onClick={() => handleRunOcr(activeNote.id)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#22221F] hover:bg-[#2C2C28] border border-[#2A2A27] text-xs font-medium text-[#F2EFE9] cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                    >
+                      <ScanText className="w-3.5 h-3.5 text-[#E06D2B]" />
+                      <span>
+                        {ocrLoadingId === activeNote.id ? 'Scanning...' : 'Extract Text'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={deletingNoteId === activeNote.id}
+                      onClick={() => handleDeleteLinerNote(activeNote.id)}
+                      aria-label="Remove scan"
+                      title="Remove scan"
+                      className="p-1.5 rounded-lg bg-[#22221F] hover:bg-[#2C2C28] border border-[#2A2A27] text-[#9E9B93] hover:text-[#FCA5A5] cursor-pointer disabled:opacity-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 )}
               </div>
 

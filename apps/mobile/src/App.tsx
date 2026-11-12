@@ -12,7 +12,10 @@ export default function App() {
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
   const [offlineTrackIds, setOfflineTrackIds] = useState<Record<string, boolean>>({});
   const [scanMode, setScanMode] = useState<'none' | 'qr' | 'liner'>('none');
+  const [scanAlbumId, setScanAlbumId] = useState<string | null>(null);
+  const [uploadingScan, setUploadingScan] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView | null>(null);
   const dbRef = useRef<SQLite.SQLiteDatabase | null>(null);
 
   const streamUrl =
@@ -108,12 +111,40 @@ export default function App() {
     }
   }
 
+  async function captureAndUploadScan() {
+    if (!cameraRef.current || !serverUri || !scanAlbumId) return;
+    setUploadingScan(true);
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.85 });
+      if (!photo?.uri) return;
+
+      const formData = new FormData();
+      formData.append('page_type', 'gatefold');
+      formData.append('run_ocr', 'true');
+      formData.append('image', {
+        uri: photo.uri,
+        name: `sleeve_${Date.now()}.jpg`,
+        type: 'image/jpeg',
+      } as unknown as Blob);
+
+      await fetch(`${serverUri}/api/albums/${scanAlbumId}/liner-notes`, {
+        method: 'POST',
+        body: formData,
+      });
+      await syncLibrary(serverUri);
+      setScanMode('none');
+      setScanAlbumId(null);
+    } finally {
+      setUploadingScan(false);
+    }
+  }
+
   if (scanMode !== 'none') {
     if (!permission?.granted) {
       return (
         <SafeAreaView className="flex-1 bg-[#121211] items-center justify-center p-6">
           <Text className="text-[#F2EFE9] text-base mb-4">
-            Camera access is required to pair or scan liner notes.
+            Camera access is required to pair or scan sleeve & liner notes.
           </Text>
           <Pressable
             onPress={requestPermission}
@@ -128,13 +159,28 @@ export default function App() {
     return (
       <SafeAreaView className="flex-1 bg-[#121211]">
         <CameraView
+          ref={cameraRef}
           style={{ flex: 1 }}
           onBarcodeScanned={
             scanMode === 'qr' ? (e) => handleQrScanned(e.data) : undefined
           }
         />
+        {scanMode === 'liner' && (
+          <Pressable
+            disabled={uploadingScan}
+            onPress={captureAndUploadScan}
+            className="mx-4 mt-4 bg-[#E06D2B] py-3.5 rounded-lg items-center"
+          >
+            <Text className="text-[#121211] font-semibold">
+              {uploadingScan ? 'Uploading Scan...' : 'Capture & Upload Sleeve Scan'}
+            </Text>
+          </Pressable>
+        )}
         <Pressable
-          onPress={() => setScanMode('none')}
+          onPress={() => {
+            setScanMode('none');
+            setScanAlbumId(null);
+          }}
           className="m-4 bg-[#1A1A18] border border-[#2A2A27] py-3 rounded-lg items-center"
         >
           <Text className="text-[#F2EFE9] font-medium">Cancel Scanner</Text>
@@ -171,14 +217,27 @@ export default function App() {
                     {album.artist} · {album.media_format.toUpperCase()} · {album.release_year}
                   </Text>
                 </View>
-                <Pressable
-                  onPress={() => makeAlbumAvailableOffline(album)}
-                  className="px-3 py-1.5 rounded-md border border-[#2A2A27] bg-[#121211]"
-                >
-                  <Text className="text-[#E06D2B] text-xs font-medium">
-                    {allOffline ? 'Available Offline' : 'Make Available Offline'}
-                  </Text>
-                </Pressable>
+                <View className="items-end gap-2">
+                  <Pressable
+                    onPress={() => makeAlbumAvailableOffline(album)}
+                    className="px-3 py-1.5 rounded-md border border-[#2A2A27] bg-[#121211]"
+                  >
+                    <Text className="text-[#E06D2B] text-xs font-medium">
+                      {allOffline ? 'Available Offline' : 'Make Available Offline'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => {
+                      setScanAlbumId(album.id);
+                      setScanMode('liner');
+                    }}
+                    className="px-3 py-1.5 rounded-md border border-[#2A2A27] bg-[#121211]"
+                  >
+                    <Text className="text-[#F2EFE9] text-xs font-medium">
+                      Scan Sleeve ({album.liner_notes.length})
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
               {album.tracks.map((track) => (
                 <Pressable

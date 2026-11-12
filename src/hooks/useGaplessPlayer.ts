@@ -2,10 +2,28 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AlbumWithDetails, Track } from '../../packages/shared/src/types';
 
 const OFFLINE_CACHE_NAME = 'remus-offline-audio-v1';
+const RECENTLY_PLAYED_STORAGE_KEY = 'remus-recently-played-v1';
 
 export interface ActiveQueueItem {
   track: Track;
   album: AlbumWithDetails;
+}
+
+export interface RecentPlayedItem {
+  trackId: string;
+  albumId: string;
+  playedAt: string;
+}
+
+function loadRecentlyPlayed(): RecentPlayedItem[] {
+  try {
+    const raw = localStorage.getItem(RECENTLY_PLAYED_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export function useGaplessPlayer() {
@@ -22,6 +40,7 @@ export function useGaplessPlayer() {
   const [volume, setVolume] = useState(0.85);
   const [isMuted, setIsMuted] = useState(false);
   const [cachedTrackIds, setCachedTrackIds] = useState<Set<string>>(new Set());
+  const [recentlyPlayed, setRecentlyPlayed] = useState<RecentPlayedItem[]>(loadRecentlyPlayed);
   const [lastRangeInfo, setLastRangeInfo] = useState<string>('HTTP 206 Partial Content');
 
   const currentItem = currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] : null;
@@ -118,6 +137,21 @@ export function useGaplessPlayer() {
       setCurrentIndex(idx);
       setCurrentTime(0);
       setDuration((item.track.duration_ms || 14000) / 1000);
+
+      setRecentlyPlayed((prev) => {
+        const entry: RecentPlayedItem = {
+          trackId: item.track.id,
+          albumId: item.album.id,
+          playedAt: new Date().toISOString(),
+        };
+        const updated = [entry, ...prev.filter((p) => p.trackId !== item.track.id)].slice(0, 12);
+        try {
+          localStorage.setItem(RECENTLY_PLAYED_STORAGE_KEY, JSON.stringify(updated));
+        } catch {
+          // Ignore storage quota errors
+        }
+        return updated;
+      });
 
       try {
         await targetEl.play();
@@ -338,6 +372,7 @@ export function useGaplessPlayer() {
     volume,
     isMuted,
     cachedTrackIds,
+    recentlyPlayed,
     lastRangeInfo,
     playAlbum,
     playQueueIndex: startIndex,

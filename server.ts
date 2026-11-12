@@ -540,6 +540,37 @@ app.post('/api/liner-notes/:id/ocr', async (req, res) => {
   }
 });
 
+app.delete('/api/liner-notes/:id', (req, res) => {
+  const note = db.prepare('SELECT * FROM liner_notes WHERE id = ?').get(req.params.id) as
+    | {
+        id: string;
+        album_id: string;
+        relative_image_path: string;
+      }
+    | undefined;
+
+  if (!note) {
+    res.status(404).json({ error: 'Liner note not found.' });
+    return;
+  }
+
+  db.prepare('DELETE FROM liner_notes WHERE id = ?').run(note.id);
+
+  // Remove uploaded image file from local storage if it is a user-uploaded scan
+  if (note.relative_image_path.startsWith('/storage/liner_notes/')) {
+    const filePath = path.join(STORAGE_LINER_DIR, path.basename(note.relative_image_path));
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch {
+        // Ignore filesystem cleanup error
+      }
+    }
+  }
+
+  res.json({ deleted: true, id: note.id, album: getAlbumById(note.album_id) });
+});
+
 // ---------------- HTTP 206 Range Audio Streaming ----------------
 app.get('/api/stream/:trackId', (req, res) => {
   const track = db
@@ -687,7 +718,7 @@ app.get('/api/pairing', async (req, res) => {
   const hostHeader = req.headers.host || `localhost:${PORT}`;
   const protocol = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
   const hostUrl = process.env.APP_URL && process.env.APP_URL !== 'MY_APP_URL'
-    ? process.env.APP_URL
+    ? process.env.APP_URL.replace(/\/+$/, '')
     : `${protocol}://${hostHeader}`;
 
   const interfaces = os.networkInterfaces();
@@ -702,24 +733,42 @@ app.get('/api/pairing', async (req, res) => {
     }
   }
 
+  const albumId = typeof req.query.albumId === 'string' ? req.query.albumId.trim() : '';
   const pairingToken = crypto.createHash('sha256').update(hostUrl).digest('hex').slice(0, 12).toUpperCase();
+  const scanParams = new URLSearchParams({ 'mobile-scan': '1', token: pairingToken });
+  if (albumId) {
+    scanParams.set('albumId', albumId);
+  }
+  const scanUrl = `${hostUrl}/?${scanParams.toString()}`;
+
   const payload = {
     app: 'remus',
     version: 1,
     hostUrl,
+    scanUrl,
     lanAddress: `http://${lanIp}:${PORT}`,
     mdnsService: '_remus._tcp.local.',
     token: pairingToken,
   };
   const payloadJson = JSON.stringify(payload);
-  const qrSvg = await QRCode.toString(payloadJson, {
-    type: 'svg',
-    margin: 1,
-    color: {
-      dark: '#F2EFE9',
-      light: '#1A1A18',
-    },
-  });
+  const [qrSvg, scanQrSvg] = await Promise.all([
+    QRCode.toString(payloadJson, {
+      type: 'svg',
+      margin: 1,
+      color: {
+        dark: '#F2EFE9',
+        light: '#1A1A18',
+      },
+    }),
+    QRCode.toString(scanUrl, {
+      type: 'svg',
+      margin: 1,
+      color: {
+        dark: '#F2EFE9',
+        light: '#1A1A18',
+      },
+    }),
+  ]);
 
   res.json({
     serverName: 'Remus Studio Host',
@@ -728,6 +777,8 @@ app.get('/api/pairing', async (req, res) => {
     mdnsService: '_remus._tcp.local.',
     pairingToken,
     qrSvg,
+    scanUrl,
+    scanQrSvg,
     payloadJson,
   });
 });

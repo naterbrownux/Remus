@@ -1,6 +1,14 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { X } from 'lucide-react';
-import type { MediaFormat, StorageRoot } from '../../packages/shared/src/types';
+import type {
+  LinerNotePageType,
+  MediaFormat,
+  StorageRoot,
+} from '../../packages/shared/src/types';
+import {
+  SleeveImageUploader,
+  type QueuedSleeveImage,
+} from './SleeveImageUploader';
 
 interface AddReleaseModalProps {
   storageRoots: StorageRoot[];
@@ -26,8 +34,57 @@ export function AddReleaseModal({
   const [trackTitlesText, setTrackTitlesText] = useState(
     'Side A1 — Opening Theme\nSide A2 — Late Night Session\nSide B1 — Reprise'
   );
+  const [queuedImages, setQueuedImages] = useState<QueuedSleeveImage[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      for (const item of queuedImages) {
+        URL.revokeObjectURL(item.previewUrl);
+      }
+    };
+  }, []);
+
+  function handleAddSleeveFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+    if (files.length === 0) return;
+    setQueuedImages((prev) => {
+      const hasFront = prev.some((p) => p.pageType === 'front_cover');
+      const hasGatefold = prev.some((p) => p.pageType === 'gatefold');
+      const next: QueuedSleeveImage[] = files.map((file, idx) => {
+        let defaultType: LinerNotePageType = 'gatefold';
+        if (!hasFront && idx === 0) {
+          defaultType = 'front_cover';
+        } else if (!hasGatefold && idx === (hasFront ? 0 : 1)) {
+          defaultType = 'gatefold';
+        } else if (idx > 1) {
+          defaultType = 'back_cover';
+        }
+        return {
+          id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          file,
+          previewUrl: URL.createObjectURL(file),
+          pageType: defaultType,
+        };
+      });
+      return [...prev, ...next];
+    });
+  }
+
+  function handleUpdatePageType(id: string, pageType: LinerNotePageType) {
+    setQueuedImages((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, pageType } : item))
+    );
+  }
+
+  function handleRemoveImage(id: string) {
+    setQueuedImages((prev) => {
+      const target = prev.find((i) => i.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((i) => i.id !== id);
+    });
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -69,6 +126,23 @@ export function AddReleaseModal({
         const data = await res.json();
         throw new Error(data.error || 'Failed to add release.');
       }
+
+      const createdAlbum = (await res.json()) as { id: string };
+      for (const img of queuedImages) {
+        const formData = new FormData();
+        formData.append('image', img.file);
+        formData.append('page_type', img.pageType);
+        formData.append('run_ocr', 'false');
+        const uploadRes = await fetch(`/api/albums/${createdAlbum.id}/liner-notes`, {
+          method: 'POST',
+          body: formData,
+        });
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Failed to upload ${img.file.name}`);
+        }
+      }
+
       await onCreated();
       onClose();
     } catch (err) {
@@ -93,7 +167,7 @@ export function AddReleaseModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
           {error && (
             <div className="p-3 rounded-lg bg-[#DC2626]/10 border border-[#DC2626]/30 text-sm text-[#FCA5A5]">
               {error}
@@ -203,6 +277,19 @@ export function AddReleaseModal({
                 className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9] focus:outline-none focus:border-[#E06D2B]"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[#9E9B93] mb-1.5">
+              Sleeve & Gatefold Images (optional)
+            </label>
+            <SleeveImageUploader
+              compact
+              items={queuedImages}
+              onAddFiles={handleAddSleeveFiles}
+              onUpdatePageType={handleUpdatePageType}
+              onRemoveItem={handleRemoveImage}
+            />
           </div>
 
           <div>

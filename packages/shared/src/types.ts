@@ -73,6 +73,8 @@ export interface PairingInfo {
   mdnsService: string;
   pairingToken: string;
   qrSvg: string;
+  scanUrl: string;
+  scanQrSvg: string;
   payloadJson: string;
 }
 
