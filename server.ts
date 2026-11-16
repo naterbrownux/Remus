@@ -17,7 +17,10 @@ import {
   STORAGE_LINER_DIR,
   STORAGE_MUSIC_DIR,
 } from './server/db.ts';
-import { extractLinerNotesWithGemini } from './server/gemini.ts';
+import {
+  detectVinylTrackBreaksWithGemini,
+  extractLinerNotesWithGemini,
+} from './server/gemini.ts';
 
 seedInitialLibrary();
 
@@ -54,6 +57,11 @@ const uploadAudio = multer({
     },
   }),
   limits: { fileSize: 80 * 1024 * 1024 },
+});
+
+const uploadMemoryAudio = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
 });
 
 app.get('/api/health', (_req, res) => {
@@ -709,6 +717,159 @@ app.post('/api/ripper/rip', (req, res) => {
       idx < trackIds.length - 1 ? trackIds[idx + 1] : null
     );
   });
+
+  res.status(201).json(getAlbumById(albumId));
+});
+
+// ---------------- Vinyl Archive & Gemini Track-Break Detection ----------------
+app.post('/api/vinyl/detect-breaks', uploadMemoryAudio.single('audio'), async (req, res) => {
+  try {
+    let payload = req.body;
+    if (typeof req.body?.metadata === 'string') {
+      payload = JSON.parse(req.body.metadata);
+    }
+
+    const durationSec = Number(payload.durationSec);
+    if (!Number.isFinite(durationSec) || durationSec <= 0) {
+      res.status(400).json({ error: 'A valid recording durationSec is required.' });
+      return;
+    }
+
+    const audioFile = req.file;
+    const result = await detectVinylTrackBreaksWithGemini({
+      durationSec,
+      albumTitle: payload.albumTitle,
+      artist: payload.artist,
+      side: payload.side,
+      rpm: payload.rpm,
+      expectedTrackTitles: Array.isArray(payload.expectedTrackTitles)
+        ? payload.expectedTrackTitles
+        : [],
+      rmsEnvelope: Array.isArray(payload.rmsEnvelope) ? payload.rmsEnvelope : [],
+      candidateValleys: Array.isArray(payload.candidateValleys) ? payload.candidateValleys : [],
+      audioBuffer:
+        audioFile && audioFile.buffer.length <= 12 * 1024 * 1024
+          ? audioFile.buffer
+          : undefined,
+      audioMimeType: audioFile?.mimetype || 'audio/wav',
+    });
+
+    res.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Gemini track-break detection failed.';
+    res.status(502).json({ error: message });
+  }
+});
+
+app.post('/api/vinyl/import', uploadAudio.array('tracksAudio', 32), (req, res) => {
+  let payload = req.body;
+  if (typeof req.body?.metadata === 'string') {
+    try {
+      payload = JSON.parse(req.body.metadata);
+    } catch {
+      res.status(400).json({ error: 'Invalid vinyl metadata JSON.' });
+      return;
+    }
+  }
+
+  const {
+    storage_root_id,
+    title,
+    artist,
+    release_year,
+    catalog_number,
+    record_label,
+    codec,
+    sample_rate,
+    bit_depth,
+    rpm,
+    input_device,
+    cartridge_notes,
+    tracks,
+  } = payload;
+
+  if (!title || !artist || !Array.isArray(tracks) || tracks.length === 0) {
+    res.status(400).json({ error: 'title, artist, and at least one track are required.' });
+    return;
+  }
+
+  const albumId = `alb-vnl-${crypto.randomBytes(3).toString('hex')}`;
+  const safeFolder = `${String(artist).replace(/[^a-z0-9]/gi, '_')}/${String(title).replace(/[^a-z0-9]/gi, '_')}`;
+  const targetDir = path.join(STORAGE_MUSIC_DIR, safeFolder);
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const sr = Number(sample_rate) || 96000;
+  const bd = Number(bit_depth) || 24;
+  const pressingParts = [
+    `Archived from vinyl (${rpm || '33⅓ RPM'} · RIAA)`,
+    input_device ? `Interface: ${input_device}` : null,
+    cartridge_notes ? String(cartridge_notes).trim() : null,
+    `${bd}-bit / ${sr % 1000 === 0 ? `${sr / 1000}kHz` : `${(sr / 1000).toFixed(1)}kHz`} ${codec || 'WAV'}`,
+  ].filter(Boolean);
+
+  db.prepare(
+    `INSERT INTO albums (
+      id, storage_root_id, relative_folder_path, title, artist, release_year,
+      media_format, catalog_number, record_label, pressing_notes, metadata_source, needs_liner_notes
+    ) VALUES (?, ?, ?, ?, ?, ?, 'vinyl', ?, ?, ?, 'Vinyl ADC + Gemini Track Break', 1)`
+  ).run(
+    albumId,
+    storage_root_id || 'root-vinyl-local',
+    safeFolder,
+    String(title).trim(),
+    String(artist).trim(),
+    release_year ? Number(release_year) : new Date().getFullYear(),
+    catalog_number || `VNL-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
+    record_label || 'Independent Vinyl Pressing',
+    pressingParts.join(' · ')
+  );
+
+  const uploadedFiles = (req.files as Express.Multer.File[] | undefined) || [];
+  const trackIds = tracks.map(() => `trk-${crypto.randomBytes(4).toString('hex')}`);
+  const insertTrack = db.prepare(
+    `INSERT INTO tracks (
+      id, album_id, relative_file_path, disc_number, track_number, title, artist,
+      duration_ms, sample_rate, bit_depth, codec, accuraterip_confidence, gapless_next_track_id
+    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+  );
+
+  tracks.forEach(
+    (
+      tr: { title: string; durationMs?: number; startSec?: number; endSec?: number; hasAudio?: boolean },
+      idx: number
+    ) => {
+      const fileName = `${String(idx + 1).padStart(2, '0')}_vinyl.wav`;
+      const relPath = `${safeFolder}/${fileName}`;
+      const absTarget = path.join(STORAGE_MUSIC_DIR, relPath);
+
+      const uploaded = uploadedFiles[idx];
+      let durationMs =
+        Number(tr.durationMs) ||
+        (typeof tr.endSec === 'number' && typeof tr.startSec === 'number'
+          ? Math.max(1000, Math.round((tr.endSec - tr.startSec) * 1000))
+          : 14000);
+
+      if (uploaded && fs.existsSync(uploaded.path)) {
+        fs.renameSync(uploaded.path, absTarget);
+      } else {
+        durationMs = ensureWavFile(absTarget, 'jazz', idx + 1, 14);
+      }
+
+      insertTrack.run(
+        trackIds[idx],
+        albumId,
+        relPath,
+        idx + 1,
+        String(tr.title || `Track ${idx + 1}`).trim(),
+        String(artist).trim(),
+        durationMs,
+        sr,
+        bd,
+        codec || 'WAV',
+        idx < trackIds.length - 1 ? trackIds[idx + 1] : null
+      );
+    }
+  );
 
   res.status(201).json(getAlbumById(albumId));
 });

@@ -7,6 +7,7 @@ import {
   Disc,
   Disc3,
   FolderGit2,
+  FolderInput,
   HardDrive,
   HardDriveDownload,
   Library,
@@ -31,6 +32,7 @@ import { MonorepoView } from './components/MonorepoView';
 import { NowPlayingView } from './components/NowPlayingView';
 import { PlayerBar } from './components/PlayerBar';
 import { StorageRootsView } from './components/StorageRootsView';
+import { VinylImportView } from './components/VinylImportView';
 import { useGaplessPlayer } from './hooks/useGaplessPlayer';
 import {
   formatAudioSpec,
@@ -38,7 +40,14 @@ import {
   getAlbumCoverUrl,
 } from './lib/formatters';
 
-type NavSection = 'library' | 'now-playing' | 'storage' | 'ripper' | 'mobile' | 'monorepo';
+type NavSection =
+  | 'library'
+  | 'now-playing'
+  | 'storage'
+  | 'ripper'
+  | 'vinyl'
+  | 'mobile'
+  | 'monorepo';
 type FormatFilter = 'all' | MediaFormat;
 
 export default function App() {
@@ -53,6 +62,7 @@ export default function App() {
   const [rootFilter, setRootFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [importOpen, setImportOpen] = useState(true);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [downloadingAlbumIds, setDownloadingAlbumIds] = useState<Set<string>>(new Set());
 
@@ -142,10 +152,17 @@ export default function App() {
     [albums]
   );
 
-  const primaryNavItems: Array<{ id: NavSection; label: string; icon: typeof Library }> = [
+  const topNavItems: Array<{ id: NavSection; label: string; icon: typeof Library }> = [
     { id: 'now-playing', label: 'Now Playing', icon: AudioLines },
     { id: 'library', label: 'Library', icon: Library },
+  ];
+
+  const importNavItems: Array<{ id: NavSection; label: string; icon: typeof Library }> = [
     { id: 'ripper', label: 'CD Ripper', icon: Disc },
+    { id: 'vinyl', label: 'Vinyl Import', icon: Disc3 },
+  ];
+
+  const bottomNavItems: Array<{ id: NavSection; label: string; icon: typeof Library }> = [
     { id: 'mobile', label: 'Mobile Sync', icon: Smartphone },
   ];
 
@@ -154,7 +171,13 @@ export default function App() {
     { id: 'monorepo', label: 'Monorepo', icon: FolderGit2 },
   ];
 
-  const allNavItems = [...primaryNavItems, ...advancedNavItems];
+  const allNavItems = [
+    ...topNavItems,
+    ...importNavItems,
+    ...bottomNavItems,
+    ...advancedNavItems,
+  ];
+  const isImportActive = importNavItems.some((item) => item.id === section);
   const isAdvancedActive = advancedNavItems.some((item) => item.id === section);
   const isAdvancedExpanded = advancedOpen;
 
@@ -163,9 +186,11 @@ export default function App() {
       ? selectedAlbum
         ? `Library / ${selectedAlbum.title}`
         : 'Library'
-      : isAdvancedActive
-        ? `Advanced / ${advancedNavItems.find((n) => n.id === section)?.label || ''}`
-        : primaryNavItems.find((n) => n.id === section)?.label || 'Library';
+      : isImportActive
+        ? `Import / ${importNavItems.find((n) => n.id === section)?.label || ''}`
+        : isAdvancedActive
+          ? `Advanced / ${advancedNavItems.find((n) => n.id === section)?.label || ''}`
+          : [...topNavItems, ...bottomNavItems].find((n) => n.id === section)?.label || 'Library';
 
   if (mobileScanMode) {
     return (
@@ -198,7 +223,7 @@ export default function App() {
           </div>
 
           <nav className="flex-1 px-3 py-5 space-y-1">
-            {primaryNavItems.map((item) => {
+            {topNavItems.map((item) => {
               const Icon = item.icon;
               const active = section === item.id;
               return (
@@ -210,6 +235,93 @@ export default function App() {
                     if (item.id !== 'library') {
                       setSelectedAlbumId(null);
                     }
+                  }}
+                  className={`w-full px-3 py-2.5 rounded-lg text-sm font-medium flex items-center gap-3 transition-colors cursor-pointer whitespace-nowrap ${
+                    active
+                      ? 'bg-[#22221F] text-[#F2EFE9]'
+                      : 'text-[#9E9B93] hover:text-[#F2EFE9] hover:bg-[#1C1C1A]'
+                  }`}
+                >
+                  <Icon
+                    className={`w-4 h-4 shrink-0 ${
+                      active ? 'text-[#E06D2B]' : 'text-[#706D66]'
+                    }`}
+                  />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+
+            {/* Import Group (CD Ripper & Vinyl Import) */}
+            <div>
+              <button
+                type="button"
+                aria-expanded={importOpen}
+                onClick={() => setImportOpen((prev) => !prev)}
+                className={`w-full px-3 py-2.5 rounded-lg text-sm font-medium flex items-center justify-between transition-colors cursor-pointer whitespace-nowrap ${
+                  isImportActive
+                    ? 'text-[#F2EFE9]'
+                    : 'text-[#9E9B93] hover:text-[#F2EFE9] hover:bg-[#1C1C1A]'
+                }`}
+              >
+                <span className="flex items-center gap-3">
+                  <FolderInput
+                    className={`w-4 h-4 shrink-0 ${
+                      isImportActive ? 'text-[#E06D2B]' : 'text-[#706D66]'
+                    }`}
+                  />
+                  <span>Import</span>
+                </span>
+                {importOpen ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-[#706D66]" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5 text-[#706D66]" />
+                )}
+              </button>
+
+              {importOpen && (
+                <div className="mt-1 space-y-1 pl-4">
+                  {importNavItems.map((item) => {
+                    const Icon = item.icon;
+                    const active = section === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setSection(item.id);
+                          setSelectedAlbumId(null);
+                          setImportOpen(true);
+                        }}
+                        className={`w-full px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-3 transition-colors cursor-pointer whitespace-nowrap ${
+                          active
+                            ? 'bg-[#22221F] text-[#F2EFE9]'
+                            : 'text-[#9E9B93] hover:text-[#F2EFE9] hover:bg-[#1C1C1A]'
+                        }`}
+                      >
+                        <Icon
+                          className={`w-4 h-4 shrink-0 ${
+                            active ? 'text-[#E06D2B]' : 'text-[#706D66]'
+                          }`}
+                        />
+                        <span>{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {bottomNavItems.map((item) => {
+              const Icon = item.icon;
+              const active = section === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setSection(item.id);
+                    setSelectedAlbumId(null);
                   }}
                   className={`w-full px-3 py-2.5 rounded-lg text-sm font-medium flex items-center gap-3 transition-colors cursor-pointer whitespace-nowrap ${
                     active
@@ -708,6 +820,17 @@ export default function App() {
                 <CdRipperView
                   storageRoots={storageRoots}
                   onRipped={async (created) => {
+                    await fetchData();
+                    setSelectedAlbumId(created.id);
+                    setSection('library');
+                  }}
+                />
+              )}
+
+              {section === 'vinyl' && (
+                <VinylImportView
+                  storageRoots={storageRoots}
+                  onImported={async (created) => {
                     await fetchData();
                     setSelectedAlbumId(created.id);
                     setSection('library');

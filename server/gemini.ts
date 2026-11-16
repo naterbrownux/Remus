@@ -54,7 +54,7 @@ export async function extractLinerNotesWithGemini(
         : 'image/jpeg';
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
+    model: 'gemini-4-hydrogen',
     contents: {
       parts: [
         {
@@ -109,5 +109,138 @@ export async function extractLinerNotesWithGemini(
     catalogNumber: parsed.catalogNumber || null,
     recordLabel: parsed.recordLabel || null,
     pressingNotes: parsed.pressingNotes || null,
+  };
+}
+
+export interface VinylTrackBreak {
+  trackNumber: number;
+  side: string;
+  title: string;
+  startSec: number;
+  endSec: number;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface VinylBreakDetectionInput {
+  durationSec: number;
+  albumTitle?: string;
+  artist?: string;
+  side?: string;
+  rpm?: string;
+  expectedTrackTitles?: string[];
+  rmsEnvelope: Array<{ timeSec: number; dbFs: number }>;
+  candidateValleys: Array<{ startSec: number; endSec: number; minDbFs: number }>;
+  audioBuffer?: Buffer;
+  audioMimeType?: string;
+}
+
+export interface VinylBreakDetectionResult {
+  tracks: VinylTrackBreak[];
+  notes: string;
+}
+
+export async function detectVinylTrackBreaksWithGemini(
+  input: VinylBreakDetectionInput
+): Promise<VinylBreakDetectionResult> {
+  const ai = getAiClient();
+  if (!ai) {
+    throw new Error(
+      'GEMINI_API_KEY is not configured. Add a Gemini API key in Settings > Secrets to identify vinyl track breaks with Gemini.'
+    );
+  }
+
+  const promptText = [
+    'You are an archival vinyl mastering engineer for Remus.',
+    `Analyze this digitized vinyl transfer (${input.side || 'Side A'}, ${input.rpm || '33⅓ RPM'}, total duration ${input.durationSec.toFixed(2)}s).`,
+    input.albumTitle ? `Release title: "${input.albumTitle}".` : '',
+    input.artist ? `Artist: "${input.artist}".` : '',
+    input.expectedTrackTitles && input.expectedTrackTitles.length > 0
+      ? `Existing track title hints: ${JSON.stringify(input.expectedTrackTitles)}.`
+      : '',
+    'Identify the exact track breaks (startSec and endSec in seconds) separating songs on this vinyl side.',
+    'Ignore brief lead-in groove clicks/needle-drop pops at the very beginning (<1.5s) and short intra-song quiet passages; focus on genuine inter-track rill/silence valleys or musical transitions.',
+    'Ensure tracks are contiguous or cleanly bounded between 0 and total duration, with startSec < endSec, sorted chronologically.',
+    `Measured candidate low-energy silence valleys: ${JSON.stringify(input.candidateValleys.slice(0, 60))}`,
+    `Sampled RMS energy profile (timeSec -> dbFs): ${JSON.stringify(input.rmsEnvelope.slice(0, 240))}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const parts: Array<
+    | { text: string }
+    | { inlineData: { mimeType: string; data: string } }
+  > = [];
+
+  if (input.audioBuffer && input.audioBuffer.length > 0 && input.audioMimeType) {
+    parts.push({
+      inlineData: {
+        mimeType: input.audioMimeType,
+        data: input.audioBuffer.toString('base64'),
+      },
+    });
+  }
+  parts.push({ text: promptText });
+
+  const response = await ai.models.generateContent({
+    model: 'gemini-4-hydrogen',
+    contents: { parts },
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          tracks: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                trackNumber: { type: Type.INTEGER },
+                side: { type: Type.STRING },
+                title: { type: Type.STRING },
+                startSec: { type: Type.NUMBER },
+                endSec: { type: Type.NUMBER },
+                confidence: { type: Type.NUMBER },
+                reasoning: { type: Type.STRING },
+              },
+              required: ['trackNumber', 'side', 'title', 'startSec', 'endSec', 'confidence', 'reasoning'],
+            },
+          },
+          notes: {
+            type: Type.STRING,
+            description: 'Short engineering summary of detected lead-in, inter-track rills, and split points.',
+          },
+        },
+        required: ['tracks', 'notes'],
+      },
+    },
+  });
+
+  const parsed = JSON.parse((response.text ?? '{}').trim()) as VinylBreakDetectionResult;
+  const maxDur = Math.max(0.5, input.durationSec);
+  const rawTracks = Array.isArray(parsed.tracks) ? parsed.tracks : [];
+  const normalized = rawTracks
+    .map((t, idx) => {
+      const start = Math.max(0, Math.min(maxDur - 0.1, Number(t.startSec) || 0));
+      const end = Math.max(start + 0.1, Math.min(maxDur, Number(t.endSec) || maxDur));
+      return {
+        trackNumber: idx + 1,
+        side: (t.side || input.side || 'A').trim(),
+        title: (t.title || `Track ${idx + 1}`).trim(),
+        startSec: Number(start.toFixed(2)),
+        endSec: Number(end.toFixed(2)),
+        confidence:
+          typeof t.confidence === 'number'
+            ? Math.max(0, Math.min(1, t.confidence))
+            : 0.9,
+        reasoning: (t.reasoning || 'Inter-track silence valley detected').trim(),
+      };
+    })
+    .sort((a, b) => a.startSec - b.startSec)
+    .map((t, idx) => ({ ...t, trackNumber: idx + 1 }));
+
+  return {
+    tracks: normalized,
+    notes: parsed.notes || `Identified ${normalized.length} track breaks across ${maxDur.toFixed(1)}s capture.`,
   };
 }

@@ -1,7 +1,7 @@
 {
   "name": "Remus",
   "description": "Audiophile-grade physical media & local-first lossless streaming music server and mobile companion.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
