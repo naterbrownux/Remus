@@ -1,10 +1,18 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { X } from 'lucide-react';
 import type {
   LinerNotePageType,
   MediaFormat,
   StorageRoot,
 } from '../../packages/shared/src/types';
+import {
+  AudioFileUploader,
+  deriveTrackTitleFromFilename,
+  extractCodecFromFile,
+  isSupportedAudioFile,
+  readAudioDurationMs,
+  type QueuedAudioTrack,
+} from './AudioFileUploader';
 import {
   SleeveImageUploader,
   type QueuedSleeveImage,
@@ -14,6 +22,20 @@ interface AddReleaseModalProps {
   storageRoots: StorageRoot[];
   onClose: () => void;
   onCreated: () => Promise<void>;
+}
+
+function inferSampleSpecs(
+  mediaFormat: MediaFormat,
+  codec: string
+): { sampleRate: number; bitDepth: number } {
+  const upper = codec.toUpperCase();
+  if (upper === 'MP3' || upper === 'AAC' || upper === 'OGG' || upper === 'OPUS') {
+    return { sampleRate: 44100, bitDepth: 16 };
+  }
+  if (mediaFormat === 'cd') {
+    return { sampleRate: 44100, bitDepth: 16 };
+  }
+  return { sampleRate: 96000, bitDepth: 24 };
 }
 
 export function AddReleaseModal({
@@ -34,17 +56,76 @@ export function AddReleaseModal({
   const [trackTitlesText, setTrackTitlesText] = useState(
     'Side A1 — Opening Theme\nSide A2 — Late Night Session\nSide B1 — Reprise'
   );
+  const [queuedAudioTracks, setQueuedAudioTracks] = useState<QueuedAudioTrack[]>([]);
   const [queuedImages, setQueuedImages] = useState<QueuedSleeveImage[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const isMountedRef = useRef(true);
+  const queuedImagesRef = useRef<QueuedSleeveImage[]>([]);
+  queuedImagesRef.current = queuedImages;
+
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
-      for (const item of queuedImages) {
+      isMountedRef.current = false;
+      for (const item of queuedImagesRef.current) {
         URL.revokeObjectURL(item.previewUrl);
       }
     };
   }, []);
+
+  function handleAddAudioFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList).filter(isSupportedAudioFile);
+    if (files.length === 0) {
+      setError('No supported audio files selected (WAV, FLAC, MP3, M4A, OGG, AAC, AIFF).');
+      return;
+    }
+    setError(null);
+
+    const additions: QueuedAudioTrack[] = files.map((file) => ({
+      id: `aud_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      file,
+      title: deriveTrackTitleFromFilename(file.name),
+      codec: extractCodecFromFile(file),
+      durationMs: null,
+    }));
+
+    setQueuedAudioTracks((prev) => [...prev, ...additions]);
+
+    for (const entry of additions) {
+      void readAudioDurationMs(entry.file).then((durationMs) => {
+        if (!isMountedRef.current || durationMs === null) return;
+        setQueuedAudioTracks((prev) =>
+          prev.map((item) => (item.id === entry.id ? { ...item, durationMs } : item))
+        );
+      });
+    }
+  }
+
+  function handleUpdateAudioTitle(id: string, nextTitle: string) {
+    setQueuedAudioTracks((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, title: nextTitle } : item))
+    );
+  }
+
+  function handleMoveAudioTrack(id: string, direction: 'up' | 'down') {
+    setQueuedAudioTracks((prev) => {
+      const idx = prev.findIndex((item) => item.id === id);
+      if (idx === -1) return prev;
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+      const copy = [...prev];
+      const [moved] = copy.splice(idx, 1);
+      copy.splice(targetIdx, 0, moved);
+      return copy;
+    });
+  }
+
+  function handleRemoveAudioTrack(id: string) {
+    setQueuedAudioTracks((prev) => prev.filter((item) => item.id !== id));
+  }
 
   function handleAddSleeveFiles(fileList: FileList | File[]) {
     const files = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
@@ -94,17 +175,21 @@ export function AddReleaseModal({
       return;
     }
     setSubmitting(true);
+    setSubmitStatus('Creating release...');
     try {
-      const tracks = trackTitlesText
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((trackTitle) => ({
-          title: trackTitle,
-          codec: mediaFormat === 'cd' ? 'FLAC' : 'WAV',
-          sample_rate: mediaFormat === 'cd' ? 44100 : 96000,
-          bit_depth: mediaFormat === 'cd' ? 16 : 24,
-        }));
+      const hasAudioFiles = queuedAudioTracks.length > 0;
+      const manualTracks = hasAudioFiles
+        ? []
+        : trackTitlesText
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((trackTitle) => ({
+              title: trackTitle,
+              codec: mediaFormat === 'cd' ? 'FLAC' : 'WAV',
+              sample_rate: mediaFormat === 'cd' ? 44100 : 96000,
+              bit_depth: mediaFormat === 'cd' ? 16 : 24,
+            }));
 
       const res = await fetch('/api/albums', {
         method: 'POST',
@@ -118,8 +203,9 @@ export function AddReleaseModal({
           catalog_number: catalogNumber || null,
           record_label: recordLabel || null,
           pressing_notes: pressingNotes || null,
-          metadata_source: 'Manual',
-          tracks,
+          metadata_source: hasAudioFiles ? 'Audio File Upload' : 'Manual',
+          tracks: manualTracks,
+          skip_default_track: hasAudioFiles,
         }),
       });
       if (!res.ok) {
@@ -128,15 +214,57 @@ export function AddReleaseModal({
       }
 
       const createdAlbum = (await res.json()) as { id: string };
-      for (const img of queuedImages) {
+
+      for (let i = 0; i < queuedAudioTracks.length; i += 1) {
+        const track = queuedAudioTracks[i];
+        setSubmitStatus(
+          `Uploading track ${i + 1} of ${queuedAudioTracks.length}...`
+        );
+        const { sampleRate, bitDepth } = inferSampleSpecs(
+          mediaFormat,
+          track.codec
+        );
+        const formData = new FormData();
+        formData.append('audio', track.file);
+        formData.append(
+          'title',
+          track.title.trim() || deriveTrackTitleFromFilename(track.file.name)
+        );
+        formData.append('codec', track.codec);
+        formData.append('sample_rate', String(sampleRate));
+        formData.append('bit_depth', String(bitDepth));
+        if (track.durationMs && track.durationMs > 0) {
+          formData.append('duration_ms', String(track.durationMs));
+        }
+
+        const trackRes = await fetch(`/api/albums/${createdAlbum.id}/tracks`, {
+          method: 'POST',
+          body: formData,
+        });
+        if (!trackRes.ok) {
+          const errData = await trackRes.json().catch(() => ({}));
+          throw new Error(
+            errData.error || `Failed to upload ${track.file.name}`
+          );
+        }
+      }
+
+      for (let i = 0; i < queuedImages.length; i += 1) {
+        const img = queuedImages[i];
+        setSubmitStatus(
+          `Uploading sleeve scan ${i + 1} of ${queuedImages.length}...`
+        );
         const formData = new FormData();
         formData.append('image', img.file);
         formData.append('page_type', img.pageType);
         formData.append('run_ocr', 'false');
-        const uploadRes = await fetch(`/api/albums/${createdAlbum.id}/liner-notes`, {
-          method: 'POST',
-          body: formData,
-        });
+        const uploadRes = await fetch(
+          `/api/albums/${createdAlbum.id}/liner-notes`,
+          {
+            method: 'POST',
+            body: formData,
+          }
+        );
         if (!uploadRes.ok) {
           const errData = await uploadRes.json().catch(() => ({}));
           throw new Error(errData.error || `Failed to upload ${img.file.name}`);
@@ -149,6 +277,7 @@ export function AddReleaseModal({
       setError(err instanceof Error ? err.message : 'Unable to save release.');
     } finally {
       setSubmitting(false);
+      setSubmitStatus(null);
     }
   }
 
@@ -280,6 +409,41 @@ export function AddReleaseModal({
           </div>
 
           <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-medium text-[#9E9B93]">
+                Audio Files
+              </label>
+              {queuedAudioTracks.length > 0 && (
+                <span className="text-[11px] font-mono text-[#9E9B93] tabular-nums">
+                  {queuedAudioTracks.length}{' '}
+                  {queuedAudioTracks.length === 1 ? 'track' : 'tracks'} queued
+                </span>
+              )}
+            </div>
+            <AudioFileUploader
+              items={queuedAudioTracks}
+              onAddFiles={handleAddAudioFiles}
+              onUpdateTitle={handleUpdateAudioTitle}
+              onMoveItem={handleMoveAudioTrack}
+              onRemoveItem={handleRemoveAudioTrack}
+            />
+          </div>
+
+          {queuedAudioTracks.length === 0 && (
+            <div>
+              <label className="block text-xs font-medium text-[#9E9B93] mb-1.5">
+                Or Enter Tracklist Manually (one title per line)
+              </label>
+              <textarea
+                rows={3}
+                value={trackTitlesText}
+                onChange={(e) => setTrackTitlesText(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9] focus:outline-none focus:border-[#E06D2B]"
+              />
+            </div>
+          )}
+
+          <div>
             <label className="block text-xs font-medium text-[#9E9B93] mb-1.5">
               Sleeve & Gatefold Images (optional)
             </label>
@@ -305,23 +469,12 @@ export function AddReleaseModal({
             />
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-[#9E9B93] mb-1.5">
-              Tracklist (one title per line)
-            </label>
-            <textarea
-              rows={3}
-              value={trackTitlesText}
-              onChange={(e) => setTrackTitlesText(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9] focus:outline-none focus:border-[#E06D2B]"
-            />
-          </div>
-
           <div className="pt-2 flex items-center justify-end gap-3 border-t border-[#2A2A27]">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg border border-[#2A2A27] text-sm text-[#9E9B93] hover:text-[#F2EFE9] cursor-pointer whitespace-nowrap"
+              disabled={submitting}
+              className="px-4 py-2 rounded-lg border border-[#2A2A27] text-sm text-[#9E9B93] hover:text-[#F2EFE9] cursor-pointer disabled:opacity-50 whitespace-nowrap"
             >
               Cancel
             </button>
@@ -330,7 +483,7 @@ export function AddReleaseModal({
               disabled={submitting}
               className="px-4 py-2 rounded-lg bg-[#E06D2B] hover:bg-[#EB7B3B] text-sm font-semibold text-[#121211] cursor-pointer disabled:opacity-50 whitespace-nowrap"
             >
-              {submitting ? 'Saving Release...' : 'Save Release'}
+              {submitting ? submitStatus || 'Saving Release...' : 'Save Release'}
             </button>
           </div>
         </form>

@@ -56,7 +56,7 @@ const uploadAudio = multer({
       cb(null, `upload_${Date.now()}_${crypto.randomBytes(3).toString('hex')}${ext}`);
     },
   }),
-  limits: { fileSize: 80 * 1024 * 1024 },
+  limits: { fileSize: 150 * 1024 * 1024 },
 });
 
 const uploadMemoryAudio = multer({
@@ -320,6 +320,7 @@ app.post('/api/albums', (req, res) => {
     pressing_notes,
     metadata_source,
     tracks,
+    skip_default_track,
   } = req.body;
 
   if (!title || !artist || !media_format) {
@@ -329,6 +330,7 @@ app.post('/api/albums', (req, res) => {
 
   const albumId = `alb-${crypto.randomBytes(4).toString('hex')}`;
   const safeFolder = `${String(artist).replace(/[^a-z0-9]/gi, '_')}/${String(title).replace(/[^a-z0-9]/gi, '_')}`;
+  fs.mkdirSync(path.join(STORAGE_MUSIC_DIR, safeFolder), { recursive: true });
 
   db.prepare(
     `INSERT INTO albums (
@@ -349,10 +351,13 @@ app.post('/api/albums', (req, res) => {
     metadata_source || 'Manual'
   );
 
+  const hasExplicitTracks = Array.isArray(tracks) && tracks.length > 0;
   const trackList: Array<{ title: string; codec?: string; sample_rate?: number; bit_depth?: number }> =
-    Array.isArray(tracks) && tracks.length > 0
+    hasExplicitTracks
       ? tracks
-      : [{ title: `${String(title).trim()} — Side A1`, codec: 'FLAC', sample_rate: 96000, bit_depth: 24 }];
+      : skip_default_track
+        ? []
+        : [{ title: `${String(title).trim()} — Side A1`, codec: 'FLAC', sample_rate: 96000, bit_depth: 24 }];
 
   const profile: SoundProfile =
     media_format === 'vinyl'
@@ -434,15 +439,30 @@ app.post('/api/albums/:id/tracks', uploadAudio.single('audio'), (req, res) => {
 
   const nextTrackNum = album.tracks.length + 1;
   const title = (req.body.title && String(req.body.title).trim()) || `Track ${nextTrackNum}`;
-  const sampleRate = Number(req.body.sample_rate) || 44100;
-  const bitDepth = Number(req.body.bit_depth) || 16;
-  const codec = (req.body.codec && String(req.body.codec)) || (req.file ? path.extname(req.file.originalname).replace('.', '').toUpperCase() || 'WAV' : 'WAV');
+  const sampleRate = Number(req.body.sample_rate) || (album.media_format === 'cd' ? 44100 : 96000);
+  const bitDepth = Number(req.body.bit_depth) || (album.media_format === 'cd' ? 16 : 24);
+  const codec =
+    (req.body.codec && String(req.body.codec)) ||
+    (req.file ? path.extname(req.file.originalname).replace('.', '').toUpperCase() || 'WAV' : 'WAV');
 
   let relPath: string;
   let durationMs = Number(req.body.duration_ms) || 14000;
 
   if (req.file) {
-    relPath = path.basename(req.file.path);
+    const ext =
+      path.extname(req.file.originalname).toLowerCase() ||
+      path.extname(req.file.path).toLowerCase() ||
+      '.wav';
+    const rawBase = path
+      .basename(req.file.originalname, path.extname(req.file.originalname))
+      .replace(/[^a-z0-9._ -]/gi, '_')
+      .trim();
+    const safeBase = rawBase || `track_${nextTrackNum}`;
+    const fileName = `${String(nextTrackNum).padStart(2, '0')}_${safeBase}_${crypto.randomBytes(2).toString('hex')}${ext}`;
+    relPath = `${album.relative_folder_path}/${fileName}`;
+    const targetDir = path.join(STORAGE_MUSIC_DIR, album.relative_folder_path);
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.renameSync(req.file.path, path.join(STORAGE_MUSIC_DIR, relPath));
   } else {
     relPath = `${album.relative_folder_path}/${String(nextTrackNum).padStart(2, '0')}_${crypto.randomBytes(3).toString('hex')}.wav`;
     durationMs = ensureWavFile(path.join(STORAGE_MUSIC_DIR, relPath), 'piano', nextTrackNum, 14);
@@ -612,11 +632,17 @@ app.get('/api/stream/:trackId', (req, res) => {
   const contentType =
     ext === '.mp3'
       ? 'audio/mpeg'
-      : ext === '.ogg'
+      : ext === '.ogg' || ext === '.opus'
         ? 'audio/ogg'
         : ext === '.flac'
           ? 'audio/flac'
-          : 'audio/wav';
+          : ext === '.m4a' || ext === '.mp4'
+            ? 'audio/mp4'
+            : ext === '.aac'
+              ? 'audio/aac'
+              : ext === '.aif' || ext === '.aiff'
+                ? 'audio/aiff'
+                : 'audio/wav';
 
   const range = req.headers.range;
   res.setHeader('Accept-Ranges', 'bytes');
