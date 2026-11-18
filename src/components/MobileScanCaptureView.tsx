@@ -160,8 +160,8 @@ export function MobileScanCaptureView({
               <h1 className="text-base font-semibold text-[#F2EFE9] truncate">
                 Remus Mobile Scan Sync
               </h1>
-              <p className="text-xs text-[#9E9B93] truncate font-mono">
-                {pairingToken ? `Paired · ${pairingToken}` : 'Direct LAN Camera Upload'}
+              <p className="text-xs text-[#9E9B93] truncate">
+                {pairingToken ? 'Connected to Library' : 'Direct Camera Upload'}
               </p>
             </div>
           </div>

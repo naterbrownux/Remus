@@ -14,22 +14,17 @@ interface TocTrack {
 }
 
 export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
-  const [drive, setDrive] = useState('Matshita DVD-R UJ-8A8 (USB-C)');
+  const [drive, setDrive] = useState('External USB Optical Drive');
   const [targetRootId, setTargetRootId] = useState(
     storageRoots.find((r) => r.default_media_format === 'cd')?.id || storageRoots[0]?.id || ''
   );
   const [codec, setCodec] = useState('FLAC');
-  const [title, setTitle] = useState('Late Night Trio in Basel');
-  const [artist, setArtist] = useState('Nils Lindqvist Quartet');
-  const [releaseYear, setReleaseYear] = useState('2004');
-  const [catalogNumber, setCatalogNumber] = useState('ECM-1892');
-  const [recordLabel, setRecordLabel] = useState('Nordic Resonance Records');
-  const [tocTracks, setTocTracks] = useState<TocTrack[]>([
-    { title: 'Glacier Glass', durationLabel: '05:18', accuraterip_confidence: 52 },
-    { title: 'Basler Münster at Dusk', durationLabel: '06:44', accuraterip_confidence: 52 },
-    { title: 'Rhine Ferry Nocturne', durationLabel: '04:51', accuraterip_confidence: 49 },
-    { title: 'Coda for Felt Piano', durationLabel: '03:37', accuraterip_confidence: 51 },
-  ]);
+  const [title, setTitle] = useState('');
+  const [artist, setArtist] = useState('');
+  const [releaseYear, setReleaseYear] = useState('');
+  const [catalogNumber, setCatalogNumber] = useState('');
+  const [recordLabel, setRecordLabel] = useState('');
+  const [tocTracks, setTocTracks] = useState<TocTrack[]>([]);
 
   const [ripping, setRipping] = useState(false);
   const [activeTrackIdx, setActiveTrackIdx] = useState<number>(-1);
@@ -97,7 +92,7 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
 
         <button
           type="button"
-          disabled={ripping}
+          disabled={ripping || !title.trim() || !artist.trim() || tocTracks.length === 0}
           onClick={startSecureRip}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#E06D2B] hover:bg-[#EB7B3B] text-sm font-semibold text-[#121211] transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
         >
@@ -117,9 +112,8 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
                 onChange={(e) => setDrive(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9]"
               >
-                <option>Matshita DVD-R UJ-8A8 (USB-C)</option>
-                <option>Pioneer BDR-XD08UMB-S (PureRead 4+)</option>
-                <option>Apple USB SuperDrive (ATAPI)</option>
+                <option value="External USB Optical Drive">External USB Optical Drive</option>
+                <option value="Built-in Optical Drive">Built-in Optical Drive</option>
               </select>
             </div>
 
@@ -158,6 +152,7 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                placeholder="Enter album title"
                 className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9]"
               />
             </div>
@@ -168,6 +163,7 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
                 type="text"
                 value={artist}
                 onChange={(e) => setArtist(e.target.value)}
+                placeholder="Enter artist name"
                 className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9]"
               />
             </div>
@@ -179,6 +175,7 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
                   type="number"
                   value={releaseYear}
                   onChange={(e) => setReleaseYear(e.target.value)}
+                  placeholder="YYYY"
                   className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm font-mono text-[#F2EFE9]"
                 />
               </div>
@@ -188,6 +185,7 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
                   type="text"
                   value={catalogNumber}
                   onChange={(e) => setCatalogNumber(e.target.value)}
+                  placeholder="Optional"
                   className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm font-mono text-[#F2EFE9]"
                 />
               </div>
@@ -197,6 +195,7 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
                   type="text"
                   value={recordLabel}
                   onChange={(e) => setRecordLabel(e.target.value)}
+                  placeholder="Optional"
                   className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9]"
                 />
               </div>
@@ -232,54 +231,62 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#232320] text-sm">
-                {tocTracks.map((tr, idx) => {
-                  const done = completedTracks.includes(idx);
-                  const active = activeTrackIdx === idx;
-                  return (
-                    <tr key={idx} className="h-11">
-                      <td className="px-4 font-mono text-xs text-[#9E9B93] tabular-nums">
-                        {String(idx + 1).padStart(2, '0')}
-                      </td>
-                      <td className="px-4">
-                        <input
-                          type="text"
-                          value={tr.title}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setTocTracks((prev) =>
-                              prev.map((item, i) => (i === idx ? { ...item, title: val } : item))
-                            );
-                          }}
-                          className="w-full bg-transparent text-sm text-[#F2EFE9] focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
-                        />
-                      </td>
-                      <td className="px-4 font-mono text-xs text-[#9E9B93] tabular-nums">
-                        AR v2 ({tr.accuraterip_confidence})
-                      </td>
-                      <td className="px-4 text-xs font-mono">
-                        {done ? (
-                          <span className="text-[#4ADE80]">Verified {codec}</span>
-                        ) : active ? (
-                          <span className="text-[#E06D2B]">Reading sectors...</span>
-                        ) : (
-                          <span className="text-[#706D66]">Queued</span>
-                        )}
-                      </td>
-                      <td className="px-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setTocTracks((prev) => prev.filter((_, i) => i !== idx))
-                          }
-                          aria-label="Remove TOC track"
-                          className="p-1 text-[#706D66] hover:text-[#FCA5A5] cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {tocTracks.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="py-10 px-4 text-center text-xs text-[#9E9B93]">
+                      No tracks in table of contents yet. Click <span className="text-[#E06D2B]">Add Track</span> to enter disc tracks before ripping.
+                    </td>
+                  </tr>
+                ) : (
+                  tocTracks.map((tr, idx) => {
+                    const done = completedTracks.includes(idx);
+                    const active = activeTrackIdx === idx;
+                    return (
+                      <tr key={idx} className="h-11">
+                        <td className="px-4 font-mono text-xs text-[#9E9B93] tabular-nums">
+                          {String(idx + 1).padStart(2, '0')}
+                        </td>
+                        <td className="px-4">
+                          <input
+                            type="text"
+                            value={tr.title}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTocTracks((prev) =>
+                                prev.map((item, i) => (i === idx ? { ...item, title: val } : item))
+                              );
+                            }}
+                            className="w-full bg-transparent text-sm text-[#F2EFE9] focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
+                          />
+                        </td>
+                        <td className="px-4 font-mono text-xs text-[#9E9B93] tabular-nums">
+                          AR v2 ({tr.accuraterip_confidence})
+                        </td>
+                        <td className="px-4 text-xs font-mono">
+                          {done ? (
+                            <span className="text-[#4ADE80]">Verified {codec}</span>
+                          ) : active ? (
+                            <span className="text-[#E06D2B]">Reading sectors...</span>
+                          ) : (
+                            <span className="text-[#706D66]">Queued</span>
+                          )}
+                        </td>
+                        <td className="px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setTocTracks((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            aria-label="Remove TOC track"
+                            className="p-1 text-[#706D66] hover:text-[#FCA5A5] cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -293,7 +300,7 @@ export function CdRipperView({ storageRoots, onRipped }: CdRipperViewProps) {
                     {rippedAlbum.title} added to your Remus Library
                   </div>
                   <div className="text-xs text-[#9E9B93]">
-                    {rippedAlbum.tracks.length} lossless tracks written to disk and indexed in SQLite.
+                    {rippedAlbum.tracks.length} lossless tracks saved to your library.
                   </div>
                 </div>
               </div>

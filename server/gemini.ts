@@ -32,7 +32,7 @@ export async function extractLinerNotesWithGemini(
   const ai = getAiClient();
   if (!ai) {
     throw new Error(
-      'GEMINI_API_KEY is not configured. Add a Gemini API key in Settings > Secrets to run AI liner-note OCR.'
+      'AI text extraction is not configured for this workspace yet.'
     );
   }
 
@@ -41,7 +41,7 @@ export async function extractLinerNotesWithGemini(
   const resolvedPath = path.join(process.cwd(), cleanRel);
 
   if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`Liner note image not found on disk: ${cleanRel}`);
+    throw new Error('The selected scan image could not be found.');
   }
 
   const bytes = fs.readFileSync(resolvedPath);
@@ -123,11 +123,14 @@ export interface VinylTrackBreak {
 }
 
 export interface VinylBreakDetectionInput {
+  mediaType?: 'vinyl' | 'cassette';
   durationSec: number;
   albumTitle?: string;
   artist?: string;
   side?: string;
   rpm?: string;
+  tapeType?: string;
+  noiseReduction?: string;
   expectedTrackTitles?: string[];
   rmsEnvelope: Array<{ timeSec: number; dbFs: number }>;
   candidateValleys: Array<{ startSec: number; endSec: number; minDbFs: number }>;
@@ -146,20 +149,29 @@ export async function detectVinylTrackBreaksWithGemini(
   const ai = getAiClient();
   if (!ai) {
     throw new Error(
-      'GEMINI_API_KEY is not configured. Add a Gemini API key in Settings > Secrets to identify vinyl track breaks with Gemini.'
+      'AI track-break detection is not configured for this workspace yet.'
     );
   }
 
+  const isCassette = input.mediaType === 'cassette';
   const promptText = [
-    'You are an archival vinyl mastering engineer for Remus.',
-    `Analyze this digitized vinyl transfer (${input.side || 'Side A'}, ${input.rpm || '33⅓ RPM'}, total duration ${input.durationSec.toFixed(2)}s).`,
+    isCassette
+      ? 'You are an archival cassette tape mastering engineer for Remus.'
+      : 'You are an archival vinyl mastering engineer for Remus.',
+    isCassette
+      ? `Analyze this digitized cassette tape transfer (${input.side || 'Side A'}, ${input.tapeType || 'Type I · Normal (120µs)'}, ${input.noiseReduction || 'Dolby NR Off'}, total duration ${input.durationSec.toFixed(2)}s).`
+      : `Analyze this digitized vinyl transfer (${input.side || 'Side A'}, ${input.rpm || '33⅓ RPM'}, total duration ${input.durationSec.toFixed(2)}s).`,
     input.albumTitle ? `Release title: "${input.albumTitle}".` : '',
     input.artist ? `Artist: "${input.artist}".` : '',
     input.expectedTrackTitles && input.expectedTrackTitles.length > 0
       ? `Existing track title hints: ${JSON.stringify(input.expectedTrackTitles)}.`
       : '',
-    'Identify the exact track breaks (startSec and endSec in seconds) separating songs on this vinyl side.',
-    'Ignore brief lead-in groove clicks/needle-drop pops at the very beginning (<1.5s) and short intra-song quiet passages; focus on genuine inter-track rill/silence valleys or musical transitions.',
+    isCassette
+      ? 'Identify the exact track breaks (startSec and endSec in seconds) separating songs on this cassette side.'
+      : 'Identify the exact track breaks (startSec and endSec in seconds) separating songs on this vinyl side.',
+    isCassette
+      ? 'Ignore brief leader-tape splices or deck transport clicks at the very beginning (<1.5s), steady tape hiss floor, and short intra-song quiet passages; focus on genuine inter-track silence gaps or musical transitions.'
+      : 'Ignore brief lead-in groove clicks/needle-drop pops at the very beginning (<1.5s) and short intra-song quiet passages; focus on genuine inter-track rill/silence valleys or musical transitions.',
     'Ensure tracks are contiguous or cleanly bounded between 0 and total duration, with startSec < endSec, sorted chronologically.',
     `Measured candidate low-energy silence valleys: ${JSON.stringify(input.candidateValleys.slice(0, 60))}`,
     `Sampled RMS energy profile (timeSec -> dbFs): ${JSON.stringify(input.rmsEnvelope.slice(0, 240))}`,
@@ -208,7 +220,9 @@ export async function detectVinylTrackBreaksWithGemini(
           },
           notes: {
             type: Type.STRING,
-            description: 'Short engineering summary of detected lead-in, inter-track rills, and split points.',
+            description: isCassette
+              ? 'Short engineering summary of detected leader trim, inter-track gaps, and split points.'
+              : 'Short engineering summary of detected lead-in, inter-track rills, and split points.',
           },
         },
         required: ['tracks', 'notes'],

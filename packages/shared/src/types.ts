@@ -77,10 +77,3 @@ export interface PairingInfo {
   scanQrSvg: string;
   payloadJson: string;
 }
-
-export interface MonorepoFile {
-  path: string;
-  category: 'shared' | 'desktop' | 'mobile';
-  language: string;
-  content: string;
-}

@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AudioLines,
+  CassetteTape,
   Check,
   ChevronDown,
   ChevronRight,
   Disc,
   Disc3,
-  FolderGit2,
   FolderInput,
   HardDrive,
   HardDriveDownload,
+  HelpCircle,
   Library,
   Play,
   Plus,
   Search,
-  SlidersHorizontal,
   Smartphone,
   Trash2,
 } from 'lucide-react';
@@ -25,14 +25,15 @@ import type {
 } from '../packages/shared/src/types';
 import { AddReleaseModal } from './components/AddReleaseModal';
 import { AlbumDetailView } from './components/AlbumDetailView';
+import { CassetteImportView } from './components/CassetteImportView';
 import { CdRipperView } from './components/CdRipperView';
 import { MobileScanCaptureView } from './components/MobileScanCaptureView';
 import { MobileSyncView } from './components/MobileSyncView';
-import { MonorepoView } from './components/MonorepoView';
 import { NowPlayingView } from './components/NowPlayingView';
 import { PlayerBar } from './components/PlayerBar';
 import { StorageRootsView } from './components/StorageRootsView';
 import { VinylImportView } from './components/VinylImportView';
+import { WelcomeModal } from './components/WelcomeModal';
 import { useGaplessPlayer } from './hooks/useGaplessPlayer';
 import {
   formatAudioSpec,
@@ -40,14 +41,16 @@ import {
   getAlbumCoverUrl,
 } from './lib/formatters';
 
+const WELCOME_STORAGE_KEY = 'remus-welcome-dismissed-v1';
+
 type NavSection =
   | 'library'
   | 'now-playing'
   | 'storage'
   | 'ripper'
   | 'vinyl'
-  | 'mobile'
-  | 'monorepo';
+  | 'cassette'
+  | 'mobile';
 type FormatFilter = 'all' | MediaFormat;
 
 export default function App() {
@@ -63,8 +66,23 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [importOpen, setImportOpen] = useState(true);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [downloadingAlbumIds, setDownloadingAlbumIds] = useState<Set<string>>(new Set());
+  const [showWelcome, setShowWelcome] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(WELCOME_STORAGE_KEY) !== '1';
+    } catch {
+      return true;
+    }
+  });
+
+  const dismissWelcome = useCallback(() => {
+    setShowWelcome(false);
+    try {
+      localStorage.setItem(WELCOME_STORAGE_KEY, '1');
+    } catch {
+      // Ignore storage write failure
+    }
+  }, []);
 
   const initialSearch = useMemo(() => new URLSearchParams(window.location.search), []);
   const [mobileScanMode, setMobileScanMode] = useState(
@@ -108,7 +126,7 @@ export default function App() {
         fetch('/api/storage-roots'),
       ]);
       if (!albumsRes.ok || !rootsRes.ok) {
-        throw new Error('Failed to load Remus local catalog.');
+        throw new Error('Unable to load your music library.');
       }
       const [albumsJson, rootsJson] = await Promise.all([
         albumsRes.json() as Promise<AlbumWithDetails[]>,
@@ -117,7 +135,9 @@ export default function App() {
       setAlbums(albumsJson);
       setStorageRoots(rootsJson);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Server unreachable.');
+      setLoadError(
+        err instanceof Error ? err.message : 'Unable to reach your music library right now.'
+      );
     } finally {
       setLoading(false);
     }
@@ -160,26 +180,20 @@ export default function App() {
   const importNavItems: Array<{ id: NavSection; label: string; icon: typeof Library }> = [
     { id: 'ripper', label: 'CD Ripper', icon: Disc },
     { id: 'vinyl', label: 'Vinyl Import', icon: Disc3 },
+    { id: 'cassette', label: 'Cassette Import', icon: CassetteTape },
   ];
 
   const bottomNavItems: Array<{ id: NavSection; label: string; icon: typeof Library }> = [
     { id: 'mobile', label: 'Mobile Sync', icon: Smartphone },
-  ];
-
-  const advancedNavItems: Array<{ id: NavSection; label: string; icon: typeof Library }> = [
     { id: 'storage', label: 'File Browser', icon: HardDrive },
-    { id: 'monorepo', label: 'Monorepo', icon: FolderGit2 },
   ];
 
   const allNavItems = [
     ...topNavItems,
     ...importNavItems,
     ...bottomNavItems,
-    ...advancedNavItems,
   ];
   const isImportActive = importNavItems.some((item) => item.id === section);
-  const isAdvancedActive = advancedNavItems.some((item) => item.id === section);
-  const isAdvancedExpanded = advancedOpen;
 
   const breadcrumbLabel =
     section === 'library'
@@ -188,9 +202,7 @@ export default function App() {
         : 'Library'
       : isImportActive
         ? `Import / ${importNavItems.find((n) => n.id === section)?.label || ''}`
-        : isAdvancedActive
-          ? `Advanced / ${advancedNavItems.find((n) => n.id === section)?.label || ''}`
-          : [...topNavItems, ...bottomNavItems].find((n) => n.id === section)?.label || 'Library';
+        : [...topNavItems, ...bottomNavItems].find((n) => n.id === section)?.label || 'Library';
 
   if (mobileScanMode) {
     return (
@@ -339,72 +351,22 @@ export default function App() {
               );
             })}
 
-            <div className="pt-3 mt-3 border-t border-[#232320]">
-              <button
-                type="button"
-                aria-expanded={isAdvancedExpanded}
-                onClick={() => setAdvancedOpen((prev) => !prev)}
-                className={`w-full px-3 py-2.5 rounded-lg text-sm font-medium flex items-center justify-between transition-colors cursor-pointer whitespace-nowrap ${
-                  isAdvancedActive
-                    ? 'text-[#F2EFE9]'
-                    : 'text-[#9E9B93] hover:text-[#F2EFE9] hover:bg-[#1C1C1A]'
-                }`}
-              >
-                <span className="flex items-center gap-3">
-                  <SlidersHorizontal
-                    className={`w-4 h-4 shrink-0 ${
-                      isAdvancedActive ? 'text-[#E06D2B]' : 'text-[#706D66]'
-                    }`}
-                  />
-                  <span>Advanced</span>
-                </span>
-                {isAdvancedExpanded ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-[#706D66]" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5 text-[#706D66]" />
-                )}
-              </button>
-
-              {isAdvancedExpanded && (
-                <div className="mt-1 space-y-1 pl-4">
-                  {advancedNavItems.map((item) => {
-                    const Icon = item.icon;
-                    const active = section === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => {
-                          setSection(item.id);
-                          setSelectedAlbumId(null);
-                          setAdvancedOpen(true);
-                        }}
-                        className={`w-full px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-3 transition-colors cursor-pointer whitespace-nowrap ${
-                          active
-                            ? 'bg-[#22221F] text-[#F2EFE9]'
-                            : 'text-[#9E9B93] hover:text-[#F2EFE9] hover:bg-[#1C1C1A]'
-                        }`}
-                      >
-                        <Icon
-                          className={`w-4 h-4 shrink-0 ${
-                            active ? 'text-[#E06D2B]' : 'text-[#706D66]'
-                          }`}
-                        />
-                        <span>{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
           </nav>
 
-          <div className="px-6 py-4 border-t border-[#2A2A27] text-xs text-[#706D66] space-y-1 tabular-nums">
-            <div className="text-[#9E9B93] font-medium">Local Studio Node</div>
+          <div className="px-6 py-4 border-t border-[#2A2A27] text-xs text-[#706D66] space-y-2 tabular-nums">
             <div>
-              {albums.length} Releases · {totalTracks} Tracks
+              {albums.length} {albums.length === 1 ? 'Release' : 'Releases'} · {totalTracks}{' '}
+              {totalTracks === 1 ? 'Track' : 'Tracks'}
             </div>
-            <div>{player.cachedTrackIds.size} Tracks Cached Offline</div>
+            <div>{player.cachedTrackIds.size} Saved Offline</div>
+            <button
+              type="button"
+              onClick={() => setShowWelcome(true)}
+              className="inline-flex items-center gap-1.5 text-xs text-[#9E9B93] hover:text-[#E06D2B] transition-colors cursor-pointer pt-0.5"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+              <span>Welcome Guide</span>
+            </button>
           </div>
         </aside>
 
@@ -577,14 +539,44 @@ export default function App() {
                         </div>
                       ))}
                     </div>
+                  ) : albums.length === 0 ? (
+                    <div className="p-10 md:p-12 rounded-xl border border-[#2A2A27] bg-[#161614] text-center space-y-4">
+                      <Disc3 className="w-9 h-9 text-[#E06D2B] mx-auto" />
+                      <div className="space-y-1.5">
+                        <h2 className="text-lg font-semibold text-[#F2EFE9]">
+                          Start building your music archive
+                        </h2>
+                        <p className="text-sm text-[#9E9B93] max-w-lg mx-auto leading-relaxed">
+                          Add your first album with audio files and sleeve artwork, record directly from a USB turntable or cassette deck, or scan liner notes with your phone.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setShowAddModal(true)}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#E06D2B] hover:bg-[#EB7B3B] text-xs font-semibold text-[#121211] cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Add Music</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSection('mobile')}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[#2A2A27] bg-[#1A1A18] hover:bg-[#22221F] text-xs font-medium text-[#F2EFE9] cursor-pointer"
+                        >
+                          <Smartphone className="w-3.5 h-3.5 text-[#E06D2B]" />
+                          <span>Mobile Sync</span>
+                        </button>
+                      </div>
+                    </div>
                   ) : filteredAlbums.length === 0 ? (
                     <div className="p-12 rounded-xl border border-[#2A2A27] bg-[#161614] text-center space-y-3">
                       <Disc3 className="w-8 h-8 text-[#706D66] mx-auto" />
                       <h2 className="text-base font-semibold text-[#F2EFE9]">
-                        No matching physical releases
+                        No matching releases
                       </h2>
                       <p className="text-sm text-[#9E9B93] max-w-md mx-auto">
-                        Adjust your format or volume filter, or catalog a new vinyl, CD, or cassette release.
+                        Adjust your search or format filter, or add a new release to your library.
                       </p>
                       <button
                         type="button"
@@ -838,6 +830,17 @@ export default function App() {
                 />
               )}
 
+              {section === 'cassette' && (
+                <CassetteImportView
+                  storageRoots={storageRoots}
+                  onImported={async (created) => {
+                    await fetchData();
+                    setSelectedAlbumId(created.id);
+                    setSection('library');
+                  }}
+                />
+              )}
+
               {section === 'mobile' && (
                 <MobileSyncView
                   albums={albums}
@@ -849,8 +852,6 @@ export default function App() {
                   onOpenMobileScanMode={(albumId) => openMobileScanMode(albumId)}
                 />
               )}
-
-              {section === 'monorepo' && <MonorepoView />}
             </div>
           </main>
         </div>
@@ -884,6 +885,32 @@ export default function App() {
         }}
         onOpenNowPlaying={() => setSection('now-playing')}
       />
+
+      {showWelcome && (
+        <WelcomeModal
+          onClose={dismissWelcome}
+          onAddMusic={() => {
+            dismissWelcome();
+            setSection('library');
+            setShowAddModal(true);
+          }}
+          onOpenVinylImport={() => {
+            dismissWelcome();
+            setSelectedAlbumId(null);
+            setSection('vinyl');
+          }}
+          onOpenCassetteImport={() => {
+            dismissWelcome();
+            setSelectedAlbumId(null);
+            setSection('cassette');
+          }}
+          onOpenMobileSync={() => {
+            dismissWelcome();
+            setSelectedAlbumId(null);
+            setSection('mobile');
+          }}
+        />
+      )}
 
       {showAddModal && (
         <AddReleaseModal

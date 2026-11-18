@@ -41,7 +41,7 @@ export function useGaplessPlayer() {
   const [isMuted, setIsMuted] = useState(false);
   const [cachedTrackIds, setCachedTrackIds] = useState<Set<string>>(new Set());
   const [recentlyPlayed, setRecentlyPlayed] = useState<RecentPlayedItem[]>(loadRecentlyPlayed);
-  const [lastRangeInfo, setLastRangeInfo] = useState<string>('HTTP 206 Partial Content');
+  const [lastRangeInfo, setLastRangeInfo] = useState<string>('Lossless Stream');
 
   const currentItem = currentIndex >= 0 && currentIndex < queue.length ? queue[currentIndex] : null;
 
@@ -85,14 +85,14 @@ export function useGaplessPlayer() {
         const cached = await cache.match(streamUrl);
         if (cached) {
           const blob = await cached.blob();
-          setLastRangeInfo('Offline Local Cache');
+          setLastRangeInfo('Offline Cache');
           return URL.createObjectURL(blob);
         }
       } catch {
         // Fallback to network stream
       }
     }
-    setLastRangeInfo('HTTP 206 Partial Content');
+    setLastRangeInfo('Lossless Stream');
     return streamUrl;
   }, []);
 

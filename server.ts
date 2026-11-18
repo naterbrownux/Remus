@@ -13,6 +13,7 @@ import {
   getAlbumById,
   getAllAlbumsWithDetails,
   getAllStorageRoots,
+  resolveValidStorageRootId,
   seedInitialLibrary,
   STORAGE_LINER_DIR,
   STORAGE_MUSIC_DIR,
@@ -21,6 +22,18 @@ import {
   detectVinylTrackBreaksWithGemini,
   extractLinerNotesWithGemini,
 } from './server/gemini.ts';
+
+function friendlyAiErrorMessage(err: unknown, fallback: string): string {
+  if (!(err instanceof Error)) return fallback;
+  const msg = err.message || '';
+  if (
+    msg.includes('not configured') ||
+    msg.includes('could not be found')
+  ) {
+    return msg;
+  }
+  return fallback;
+}
 
 seedInitialLibrary();
 
@@ -339,7 +352,7 @@ app.post('/api/albums', (req, res) => {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
   ).run(
     albumId,
-    storage_root_id || null,
+    resolveValidStorageRootId(storage_root_id),
     safeFolder,
     String(title).trim(),
     String(artist).trim(),
@@ -515,7 +528,7 @@ app.post('/api/albums/:id/liner-notes', uploadLiner.single('image'), async (req,
       extractedText = result.extractedText;
       confidence = result.confidenceScore;
     } catch (err) {
-      ocrError = err instanceof Error ? err.message : 'OCR processing failed.';
+      ocrError = friendlyAiErrorMessage(err, 'Text extraction is currently unavailable.');
     }
   }
 
@@ -563,7 +576,7 @@ app.post('/api/liner-notes/:id/ocr', async (req, res) => {
       extracted: result,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gemini Vision OCR failed.';
+    const message = friendlyAiErrorMessage(err, 'Text extraction failed. Please try again.');
     res.status(502).json({ error: message });
   }
 });
@@ -708,14 +721,14 @@ app.post('/api/ripper/rip', (req, res) => {
     ) VALUES (?, ?, ?, ?, ?, ?, 'cd', ?, ?, ?, 'AccurateRip + MusicBrainz', 1)`
   ).run(
     albumId,
-    storage_root_id || 'root-cd-nas',
+    resolveValidStorageRootId(storage_root_id),
     safeFolder,
     String(title).trim(),
     String(artist).trim(),
     release_year ? Number(release_year) : new Date().getFullYear(),
     catalog_number || `CD-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
     record_label || 'Independent Compact Disc',
-    `Ripped securely via Remus Optical Drive Engine · Offset +667 samples · AccurateRip v2 verified.`
+    `Compact disc transfer · 16-bit / 44.1kHz ${codec || 'FLAC'}`
   );
 
   const trackIds = tracks.map(() => `trk-${crypto.randomBytes(4).toString('hex')}`);
@@ -782,7 +795,10 @@ app.post('/api/vinyl/detect-breaks', uploadMemoryAudio.single('audio'), async (r
 
     res.json(result);
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Gemini track-break detection failed.';
+    const message = friendlyAiErrorMessage(
+      err,
+      'Could not detect track breaks automatically. You can still add or adjust split points manually.'
+    );
     res.status(502).json({ error: message });
   }
 });
@@ -840,7 +856,7 @@ app.post('/api/vinyl/import', uploadAudio.array('tracksAudio', 32), (req, res) =
     ) VALUES (?, ?, ?, ?, ?, ?, 'vinyl', ?, ?, ?, 'Vinyl ADC + Gemini Track Break', 1)`
   ).run(
     albumId,
-    storage_root_id || 'root-vinyl-local',
+    resolveValidStorageRootId(storage_root_id),
     safeFolder,
     String(title).trim(),
     String(artist).trim(),
@@ -865,6 +881,165 @@ app.post('/api/vinyl/import', uploadAudio.array('tracksAudio', 32), (req, res) =
       idx: number
     ) => {
       const fileName = `${String(idx + 1).padStart(2, '0')}_vinyl.wav`;
+      const relPath = `${safeFolder}/${fileName}`;
+      const absTarget = path.join(STORAGE_MUSIC_DIR, relPath);
+
+      const uploaded = uploadedFiles[idx];
+      let durationMs =
+        Number(tr.durationMs) ||
+        (typeof tr.endSec === 'number' && typeof tr.startSec === 'number'
+          ? Math.max(1000, Math.round((tr.endSec - tr.startSec) * 1000))
+          : 14000);
+
+      if (uploaded && fs.existsSync(uploaded.path)) {
+        fs.renameSync(uploaded.path, absTarget);
+      } else {
+        durationMs = ensureWavFile(absTarget, 'jazz', idx + 1, 14);
+      }
+
+      insertTrack.run(
+        trackIds[idx],
+        albumId,
+        relPath,
+        idx + 1,
+        String(tr.title || `Track ${idx + 1}`).trim(),
+        String(artist).trim(),
+        durationMs,
+        sr,
+        bd,
+        codec || 'WAV',
+        idx < trackIds.length - 1 ? trackIds[idx + 1] : null
+      );
+    }
+  );
+
+  res.status(201).json(getAlbumById(albumId));
+});
+
+// ---------------- Cassette Archive & Gemini Track-Break Detection ----------------
+app.post('/api/cassette/detect-breaks', uploadMemoryAudio.single('audio'), async (req, res) => {
+  try {
+    let payload = req.body;
+    if (typeof req.body?.metadata === 'string') {
+      payload = JSON.parse(req.body.metadata);
+    }
+
+    const durationSec = Number(payload.durationSec);
+    if (!Number.isFinite(durationSec) || durationSec <= 0) {
+      res.status(400).json({ error: 'A valid recording durationSec is required.' });
+      return;
+    }
+
+    const audioFile = req.file;
+    const result = await detectVinylTrackBreaksWithGemini({
+      mediaType: 'cassette',
+      durationSec,
+      albumTitle: payload.albumTitle,
+      artist: payload.artist,
+      side: payload.side,
+      tapeType: payload.tapeType,
+      noiseReduction: payload.noiseReduction,
+      expectedTrackTitles: Array.isArray(payload.expectedTrackTitles)
+        ? payload.expectedTrackTitles
+        : [],
+      rmsEnvelope: Array.isArray(payload.rmsEnvelope) ? payload.rmsEnvelope : [],
+      candidateValleys: Array.isArray(payload.candidateValleys) ? payload.candidateValleys : [],
+      audioBuffer:
+        audioFile && audioFile.buffer.length <= 12 * 1024 * 1024
+          ? audioFile.buffer
+          : undefined,
+      audioMimeType: audioFile?.mimetype || 'audio/wav',
+    });
+
+    res.json(result);
+  } catch (err) {
+    const message = friendlyAiErrorMessage(
+      err,
+      'Could not detect track breaks automatically. You can still add or adjust split points manually.'
+    );
+    res.status(502).json({ error: message });
+  }
+});
+
+app.post('/api/cassette/import', uploadAudio.array('tracksAudio', 32), (req, res) => {
+  let payload = req.body;
+  if (typeof req.body?.metadata === 'string') {
+    try {
+      payload = JSON.parse(req.body.metadata);
+    } catch {
+      res.status(400).json({ error: 'Invalid cassette metadata JSON.' });
+      return;
+    }
+  }
+
+  const {
+    storage_root_id,
+    title,
+    artist,
+    release_year,
+    catalog_number,
+    record_label,
+    codec,
+    sample_rate,
+    bit_depth,
+    tape_type,
+    noise_reduction,
+    input_device,
+    deck_notes,
+    tracks,
+  } = payload;
+
+  if (!title || !artist || !Array.isArray(tracks) || tracks.length === 0) {
+    res.status(400).json({ error: 'title, artist, and at least one track are required.' });
+    return;
+  }
+
+  const albumId = `alb-cas-${crypto.randomBytes(3).toString('hex')}`;
+  const safeFolder = `${String(artist).replace(/[^a-z0-9]/gi, '_')}/${String(title).replace(/[^a-z0-9]/gi, '_')}`;
+  const targetDir = path.join(STORAGE_MUSIC_DIR, safeFolder);
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const sr = Number(sample_rate) || 96000;
+  const bd = Number(bit_depth) || 24;
+  const pressingParts = [
+    `Archived from cassette (${tape_type || 'Type I · Normal (120µs)'}${noise_reduction ? `, ${noise_reduction}` : ''})`,
+    input_device ? `Interface: ${input_device}` : null,
+    deck_notes ? String(deck_notes).trim() : null,
+    `${bd}-bit / ${sr % 1000 === 0 ? `${sr / 1000}kHz` : `${(sr / 1000).toFixed(1)}kHz`} ${codec || 'WAV'}`,
+  ].filter(Boolean);
+
+  db.prepare(
+    `INSERT INTO albums (
+      id, storage_root_id, relative_folder_path, title, artist, release_year,
+      media_format, catalog_number, record_label, pressing_notes, metadata_source, needs_liner_notes
+    ) VALUES (?, ?, ?, ?, ?, ?, 'cassette', ?, ?, ?, 'Cassette Deck + Gemini Track Break', 1)`
+  ).run(
+    albumId,
+    resolveValidStorageRootId(storage_root_id),
+    safeFolder,
+    String(title).trim(),
+    String(artist).trim(),
+    release_year ? Number(release_year) : new Date().getFullYear(),
+    catalog_number || `CAS-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
+    record_label || 'Independent Cassette Release',
+    pressingParts.join(' · ')
+  );
+
+  const uploadedFiles = (req.files as Express.Multer.File[] | undefined) || [];
+  const trackIds = tracks.map(() => `trk-${crypto.randomBytes(4).toString('hex')}`);
+  const insertTrack = db.prepare(
+    `INSERT INTO tracks (
+      id, album_id, relative_file_path, disc_number, track_number, title, artist,
+      duration_ms, sample_rate, bit_depth, codec, accuraterip_confidence, gapless_next_track_id
+    ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+  );
+
+  tracks.forEach(
+    (
+      tr: { title: string; durationMs?: number; startSec?: number; endSec?: number; hasAudio?: boolean },
+      idx: number
+    ) => {
+      const fileName = `${String(idx + 1).padStart(2, '0')}_cassette.wav`;
       const relPath = `${safeFolder}/${fileName}`;
       const absTarget = path.join(STORAGE_MUSIC_DIR, relPath);
 
@@ -970,32 +1145,6 @@ app.get('/api/pairing', async (req, res) => {
   });
 });
 
-// ---------------- Monorepo Inspector Endpoint ----------------
-app.get('/api/monorepo', (_req, res) => {
-  const files: Array<{ path: string; category: string; language: string; content: string }> = [];
-  const candidates = [
-    { path: 'packages/shared/schema.sql', category: 'shared', language: 'sql' },
-    { path: 'packages/shared/src/types.ts', category: 'shared', language: 'typescript' },
-    { path: 'apps/desktop/package.json', category: 'desktop', language: 'json' },
-    { path: 'apps/desktop/src-tauri/Cargo.toml', category: 'desktop', language: 'toml' },
-    { path: 'apps/desktop/src-tauri/src/main.rs', category: 'desktop', language: 'rust' },
-    { path: 'apps/mobile/package.json', category: 'mobile', language: 'json' },
-    { path: 'apps/mobile/app.json', category: 'mobile', language: 'json' },
-    { path: 'apps/mobile/src/App.tsx', category: 'mobile', language: 'tsx' },
-  ];
-
-  for (const c of candidates) {
-    const abs = path.join(ROOT_DIR, c.path);
-    if (fs.existsSync(abs)) {
-      files.push({
-        ...c,
-        content: fs.readFileSync(abs, 'utf-8'),
-      });
-    }
-  }
-
-  res.json({ files });
-});
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

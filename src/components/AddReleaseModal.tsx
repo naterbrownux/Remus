@@ -45,7 +45,7 @@ export function AddReleaseModal({
 }: AddReleaseModalProps) {
   const [title, setTitle] = useState('');
   const [artist, setArtist] = useState('');
-  const [releaseYear, setReleaseYear] = useState('1974');
+  const [releaseYear, setReleaseYear] = useState('');
   const [mediaFormat, setMediaFormat] = useState<MediaFormat>('vinyl');
   const [storageRootId, setStorageRootId] = useState(
     storageRoots.find((r) => r.is_online === 1)?.id || ''
@@ -53,9 +53,7 @@ export function AddReleaseModal({
   const [catalogNumber, setCatalogNumber] = useState('');
   const [recordLabel, setRecordLabel] = useState('');
   const [pressingNotes, setPressingNotes] = useState('');
-  const [trackTitlesText, setTrackTitlesText] = useState(
-    'Side A1 — Opening Theme\nSide A2 — Late Night Session\nSide B1 — Reprise'
-  );
+  const [trackTitlesText, setTrackTitlesText] = useState('');
   const [queuedAudioTracks, setQueuedAudioTracks] = useState<QueuedAudioTrack[]>([]);
   const [queuedImages, setQueuedImages] = useState<QueuedSleeveImage[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -358,6 +356,7 @@ export function AddReleaseModal({
                 type="number"
                 value={releaseYear}
                 onChange={(e) => setReleaseYear(e.target.value)}
+                placeholder="YYYY"
                 className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm font-mono text-[#F2EFE9] focus:outline-none focus:border-[#E06D2B]"
               />
             </div>
@@ -438,6 +437,7 @@ export function AddReleaseModal({
                 rows={3}
                 value={trackTitlesText}
                 onChange={(e) => setTrackTitlesText(e.target.value)}
+                placeholder={'Track 1\nTrack 2\nTrack 3'}
                 className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9] focus:outline-none focus:border-[#E06D2B]"
               />
             </div>

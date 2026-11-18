@@ -97,7 +97,7 @@ export function NowPlayingView({
               Nothing Playing
             </h1>
             <p className="text-sm text-[#9E9B93] leading-relaxed">
-              Select any vinyl transfer, compact disc rip, or calibrated cassette release below to start lossless HTTP Range playback with gapless track preloading.
+              Select any vinyl transfer, compact disc rip, or cassette release from your library to start lossless gapless playback.
             </p>
             <div className="pt-2">
               <button
@@ -413,16 +413,16 @@ export function NowPlayingView({
               </span>
             </div>
             <div>
-              <span className="text-[#706D66] block">Transport</span>
+              <span className="text-[#706D66] block">Playback</span>
               <span className="font-mono text-[#F2EFE9] inline-flex items-center gap-1.5">
                 {isCached && <HardDriveDownload className="w-3.5 h-3.5 text-[#E06D2B]" />}
-                <span>{isCached ? 'Offline Local Cache' : lastRangeInfo}</span>
+                <span>{isCached ? 'Offline Cache' : lastRangeInfo}</span>
               </span>
             </div>
             <div>
-              <span className="text-[#706D66] block">Gapless Buffer</span>
+              <span className="text-[#706D66] block">Up Next</span>
               <span className="font-mono text-[#C9C5BC]">
-                {nextQueueItem ? `Preloaded #${nextQueueItem.track.track_number}` : 'End of Queue'}
+                {nextQueueItem ? `Track #${nextQueueItem.track.track_number}` : 'End of Queue'}
               </span>
             </div>
           </div>

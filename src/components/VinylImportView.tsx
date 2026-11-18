@@ -52,14 +52,12 @@ export function VinylImportView({ storageRoots, onImported }: VinylImportViewPro
   const [formatKey, setFormatKey] = useState<string>('WAV_96_24');
   const [rpm, setRpm] = useState('33⅓ RPM · RIAA');
   const [sideLabel, setSideLabel] = useState('Side A');
-  const [title, setTitle] = useState('Midnight Echoes at Blue Note');
-  const [artist, setArtist] = useState('Kenji Takahashi Trio');
-  const [releaseYear, setReleaseYear] = useState('1978');
-  const [catalogNumber, setCatalogNumber] = useState('TBM-2540');
-  const [recordLabel, setRecordLabel] = useState('Three Blind Mice');
-  const [cartridgeNotes, setCartridgeNotes] = useState(
-    'Ortofon 2M Bronze · USB Phono ADC'
-  );
+  const [title, setTitle] = useState('');
+  const [artist, setArtist] = useState('');
+  const [releaseYear, setReleaseYear] = useState('');
+  const [catalogNumber, setCatalogNumber] = useState('');
+  const [recordLabel, setRecordLabel] = useState('');
+  const [cartridgeNotes, setCartridgeNotes] = useState('');
 
   // Live capture & loaded audio state
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -75,11 +73,7 @@ export function VinylImportView({ storageRoots, onImported }: VinylImportViewPro
   const [capturedSourceLabel, setCapturedSourceLabel] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AudioAnalysisSummary | null>(null);
 
-  const [tracks, setTracks] = useState<VinylTrackRow[]>([
-    { side: 'A', title: 'Opening Groove', startSec: 0, endSec: 268 },
-    { side: 'A', title: 'Rain on Shinjuku Asphalt', startSec: 268, endSec: 590 },
-    { side: 'A', title: 'Warm Tube Soliloquy', startSec: 590, endSec: 912 },
-  ]);
+  const [tracks, setTracks] = useState<VinylTrackRow[]>([]);
 
   const [detectingBreaks, setDetectingBreaks] = useState(false);
   const [geminiNotes, setGeminiNotes] = useState<string | null>(null);
@@ -555,7 +549,7 @@ export function VinylImportView({ storageRoots, onImported }: VinylImportViewPro
 
         <button
           type="button"
-          disabled={importing || isRecording || tracks.length === 0}
+          disabled={importing || isRecording || !title.trim() || !artist.trim() || tracks.length === 0}
           onClick={startVinylImport}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#E06D2B] hover:bg-[#EB7B3B] text-sm font-semibold text-[#121211] transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
         >
@@ -758,6 +752,7 @@ export function VinylImportView({ storageRoots, onImported }: VinylImportViewPro
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                placeholder="Enter album title"
                 className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9]"
               />
             </div>
@@ -768,6 +763,7 @@ export function VinylImportView({ storageRoots, onImported }: VinylImportViewPro
                 type="text"
                 value={artist}
                 onChange={(e) => setArtist(e.target.value)}
+                placeholder="Enter artist name"
                 className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9]"
               />
             </div>
@@ -779,6 +775,7 @@ export function VinylImportView({ storageRoots, onImported }: VinylImportViewPro
                   type="number"
                   value={releaseYear}
                   onChange={(e) => setReleaseYear(e.target.value)}
+                  placeholder="YYYY"
                   className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm font-mono text-[#F2EFE9]"
                 />
               </div>
@@ -788,6 +785,7 @@ export function VinylImportView({ storageRoots, onImported }: VinylImportViewPro
                   type="text"
                   value={catalogNumber}
                   onChange={(e) => setCatalogNumber(e.target.value)}
+                  placeholder="Optional"
                   className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm font-mono text-[#F2EFE9]"
                 />
               </div>
@@ -797,6 +795,7 @@ export function VinylImportView({ storageRoots, onImported }: VinylImportViewPro
                   type="text"
                   value={recordLabel}
                   onChange={(e) => setRecordLabel(e.target.value)}
+                  placeholder="Optional"
                   className="w-full px-3 py-2 rounded-lg bg-[#121211] border border-[#2A2A27] text-sm text-[#F2EFE9]"
                 />
               </div>
@@ -931,107 +930,116 @@ export function VinylImportView({ storageRoots, onImported }: VinylImportViewPro
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#232320] text-sm">
-                  {tracks.map((tr, idx) => {
-                    const durSec = Math.max(0, tr.endSec - tr.startSec);
-                    return (
-                      <tr key={idx} className="h-11">
-                        <td className="px-3 font-mono text-xs text-[#9E9B93] tabular-nums">
-                          {String(idx + 1).padStart(2, '0')}
-                        </td>
-                        <td className="px-3">
-                          <input
-                            type="text"
-                            value={tr.side}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setTracks((prev) =>
-                                prev.map((item, i) => (i === idx ? { ...item, side: val } : item))
-                              );
-                            }}
-                            className="w-10 bg-transparent font-mono text-xs text-[#C9C5BC] focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
-                          />
-                        </td>
-                        <td className="px-3">
-                          <input
-                            type="text"
-                            value={tr.title}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setTracks((prev) =>
-                                prev.map((item, i) => (i === idx ? { ...item, title: val } : item))
-                              );
-                            }}
-                            className="w-full bg-transparent text-sm text-[#F2EFE9] focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
-                          />
-                        </td>
-                        <td className="px-3">
-                          <input
-                            type="number"
-                            step="0.5"
-                            min={0}
-                            value={tr.startSec}
-                            onChange={(e) => {
-                              const val = Number(e.target.value) || 0;
-                              setTracks((prev) =>
-                                prev.map((item, i) =>
-                                  i === idx ? { ...item, startSec: val } : item
-                                )
-                              );
-                            }}
-                            className="w-16 bg-transparent font-mono text-xs text-[#9E9B93] tabular-nums focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
-                          />
-                        </td>
-                        <td className="px-3">
-                          <input
-                            type="number"
-                            step="0.5"
-                            min={0}
-                            value={tr.endSec}
-                            onChange={(e) => {
-                              const val = Number(e.target.value) || 0;
-                              setTracks((prev) =>
-                                prev.map((item, i) => (i === idx ? { ...item, endSec: val } : item))
-                              );
-                            }}
-                            className="w-16 bg-transparent font-mono text-xs text-[#9E9B93] tabular-nums focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
-                          />
-                        </td>
-                        <td className="px-3 font-mono text-xs text-[#9E9B93] text-right tabular-nums">
-                          {formatSeconds(durSec)}
-                        </td>
-                        <td className="px-3 text-right">
-                          <div className="inline-flex items-center gap-1.5">
-                            {capturedBuffer && (
+                  {tracks.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-10 px-4 text-center text-xs text-[#9E9B93]">
+                        Record from your USB turntable, load an audio recording, or click{' '}
+                        <span className="text-[#E06D2B]">Add Track</span> to enter track split points.
+                      </td>
+                    </tr>
+                  ) : (
+                    tracks.map((tr, idx) => {
+                      const durSec = Math.max(0, tr.endSec - tr.startSec);
+                      return (
+                        <tr key={idx} className="h-11">
+                          <td className="px-3 font-mono text-xs text-[#9E9B93] tabular-nums">
+                            {String(idx + 1).padStart(2, '0')}
+                          </td>
+                          <td className="px-3">
+                            <input
+                              type="text"
+                              value={tr.side}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setTracks((prev) =>
+                                  prev.map((item, i) => (i === idx ? { ...item, side: val } : item))
+                                );
+                              }}
+                              className="w-10 bg-transparent font-mono text-xs text-[#C9C5BC] focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
+                            />
+                          </td>
+                          <td className="px-3">
+                            <input
+                              type="text"
+                              value={tr.title}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setTracks((prev) =>
+                                  prev.map((item, i) => (i === idx ? { ...item, title: val } : item))
+                                );
+                              }}
+                              className="w-full bg-transparent text-sm text-[#F2EFE9] focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
+                            />
+                          </td>
+                          <td className="px-3">
+                            <input
+                              type="number"
+                              step="0.5"
+                              min={0}
+                              value={tr.startSec}
+                              onChange={(e) => {
+                                const val = Number(e.target.value) || 0;
+                                setTracks((prev) =>
+                                  prev.map((item, i) =>
+                                    i === idx ? { ...item, startSec: val } : item
+                                  )
+                                );
+                              }}
+                              className="w-16 bg-transparent font-mono text-xs text-[#9E9B93] tabular-nums focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
+                            />
+                          </td>
+                          <td className="px-3">
+                            <input
+                              type="number"
+                              step="0.5"
+                              min={0}
+                              value={tr.endSec}
+                              onChange={(e) => {
+                                const val = Number(e.target.value) || 0;
+                                setTracks((prev) =>
+                                  prev.map((item, i) => (i === idx ? { ...item, endSec: val } : item))
+                                );
+                              }}
+                              className="w-16 bg-transparent font-mono text-xs text-[#9E9B93] tabular-nums focus:outline-none border-b border-transparent focus:border-[#E06D2B]"
+                            />
+                          </td>
+                          <td className="px-3 font-mono text-xs text-[#9E9B93] text-right tabular-nums">
+                            {formatSeconds(durSec)}
+                          </td>
+                          <td className="px-3 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              {capturedBuffer && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    togglePreviewSegment(idx, tr.startSec, tr.endSec)
+                                  }
+                                  aria-label={`Preview ${tr.title}`}
+                                  className={`p-1 cursor-pointer ${
+                                    previewPlayingIdx === idx
+                                      ? 'text-[#E06D2B]'
+                                      : 'text-[#706D66] hover:text-[#F2EFE9]'
+                                  }`}
+                                >
+                                  <Play className="w-3.5 h-3.5 fill-current" />
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() =>
-                                  togglePreviewSegment(idx, tr.startSec, tr.endSec)
+                                  setTracks((prev) => prev.filter((_, i) => i !== idx))
                                 }
-                                aria-label={`Preview ${tr.title}`}
-                                className={`p-1 cursor-pointer ${
-                                  previewPlayingIdx === idx
-                                    ? 'text-[#E06D2B]'
-                                    : 'text-[#706D66] hover:text-[#F2EFE9]'
-                                }`}
+                                aria-label="Remove vinyl track"
+                                className="p-1 text-[#706D66] hover:text-[#FCA5A5] cursor-pointer"
                               >
-                                <Play className="w-3.5 h-3.5 fill-current" />
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setTracks((prev) => prev.filter((_, i) => i !== idx))
-                              }
-                              aria-label="Remove vinyl track"
-                              className="p-1 text-[#706D66] hover:text-[#FCA5A5] cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
